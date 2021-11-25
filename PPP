@@ -49,7 +49,7 @@ $ $PROGNAME [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
                                               - its hmm model (.hmm, made by 'hmmbuild')
                                               For full functionality, it is recommended that the directory contains additional 2 files:
                                               - taxon file ('taxon.tsv' -- 1. sequence_id, 2. clade or taxonomy) used by '--taxon-file <tsv>' of 'gappa examine assign'
-																							- alignment check file ('position.tsv' -- 1. label, 2. position(s) in alignment, which can be multiple per a label by using ',' as a separator)
+                                              - alignment check file ('position.tsv' -- 1. label, 2. position(s) in alignment, which can be multiple per a label by using ',' as a separator)
                                                 to check important positions in sequence alignment
 
                                               Multiple Reference packages can be specfied with wildcard (e.g., 'dir/*', quate required) or comma separated values (e.g., A,B).
@@ -61,6 +61,9 @@ $ $PROGNAME [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
                                               - gappa examine assign: https://github.com/fhcrc/taxtasti://github.com/lczech/gappa/wiki/Subcommand:-assign 
     -o, --outdir     [path] (required)     -- output directory (should not exist unless '--overwrite' is specified)
     --overwrite      [bool]                -- overwrite output directory
+
+  (mode)
+    --only-detect    [bool]                -- only detect target sequence and extract hit region
 
   (prefilter)
     -e, --evalue     [num] (default: 1e-5) -- evalue threshold of hmmsearch
@@ -258,7 +261,7 @@ flog=$logdir/$startTime.$jobname.log
 command -v hmmsearch >/dev/null 2>&1 || { echo >&2 "$Errmsg hmmsearch (hmmer) is not available.  Aborting."; exit 1; }
 command -v mafft >/dev/null 2>&1 || { echo >&2 "$Errmsg mafft is not available.  Aborting."; exit 1; }
 command -v gappa >/dev/null 2>&1 || { echo >&2 "$Errmsg gappa is not available.  Aborting."; exit 1; }
-command -v pplacer >/dev/null 2>&1 || { echo >&2 "$Errmsg pplacer is not available.  Aborting."; exit 1; }
+# command -v pplacer >/dev/null 2>&1 || { echo >&2 "$Errmsg pplacer is not available.  Aborting."; exit 1; }
 command -v ruby >/dev/null 2>&1 || { echo >&2 "$Errmsg ruby is not available.  Aborting."; exit 1; }
 
 ### check ruby version
