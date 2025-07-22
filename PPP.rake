@@ -2,7 +2,7 @@
 
 # {{{ procedures
 WriteBatch  = lambda do |t, jobdir, outs|
-	jdir = "#{jobdir}/#{t.name.split(":")[-1]}"; mkdir_p jdir unless File.directory?(jdir)
+  jdir = "#{jobdir}/#{t.name.split(":")[-1]}"; mkdir_p jdir unless File.directory?(jdir)
   jnum = outs.size
 
   if jnum > 0
@@ -14,63 +14,64 @@ WriteBatch  = lambda do |t, jobdir, outs|
   end
 end
 
-RunBatch    = lambda do |t, jobdir, ncpu, logdir|
-	jdir = "#{jobdir}/#{t.name.split(":")[-1]}"
+RunBatch  = lambda do |t, jobdir, ncpu, logdir|
+  jdir = "#{jobdir}/#{t.name.split(":")[-1]}"
   ldir = "#{logdir}/#{t.name.split(":")[-1]}"; mkdir_p ldir unless File.directory?(ldir)
 
   Dir["#{jdir}/*.sh"].sort_by{ |fin| fin.split(".")[-1].to_i }.each{ |fin| ## always 1 or 0 file
     if ncpu > 1
       sh "parallel --jobs #{ncpu} --joblog #{ldir}/parallel.log <#{fin}"
-		else
-			# sh "bash -c #{fin}" ## --> permission denied
-			sh "bash #{fin}"
-		end
-	}
+    else
+      # sh "bash -c #{fin}" ## --> permission denied
+      sh "bash #{fin}"
+    end
+  }
   open("#{ldir}/exit", "w"){ |fw| fw.puts "exit at #{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}" }
 end
 
 PrintStatus = lambda do |current, total, status, t|
-	puts ""
-	puts "\e[1;32m===== #{Time.now}\e[0m"
-	puts "\e[1;32m===== step #{current} / #{total} (#{t.name}) -- #{status}\e[0m"
-	puts ""
-	$stdout.flush
+  puts ""
+  puts "\e[1;32m===== #{Time.now}\e[0m"
+  puts "\e[1;32m===== step #{current} / #{total} (#{t.name}) -- #{status}\e[0m"
+  puts ""
+  $stdout.flush
 end
 
 CheckVersion = lambda do |commands|
-	commands.each{ |command|
-		str = case command
-					when "ruby"
-						%|which ruby && ruby --version 2>&1|
-					when "hmmsearch"
-						%{which hmmsearch && hmmsearch -h 2>&1 |head -n 2}
-					when "mafft"
-						%{which mafft && mafft -v 2>&1 |head -n 4 |tail -n 1}
-					when "gappa"
-						%{which gappa && gappa --version}
-					when "pplacer"
-						%{which pplacer && pplacer --version}
-					when "parallel"
-						%{which parallel && LANG=C parallel --version 2>&1 |head -n 1}
-					end
-		puts ""
-		puts "\e[1;32m===== check version: #{command}\e[0m"
-		puts ""
-		puts "$ #{str}"
-		### run
-		puts `#{str}`
-		### flush
-		$stdout.flush
-	}
+  commands.each{ |command|
+    str = case command
+    when "ruby"
+      %|which ruby && ruby --version 2>&1|
+    when "hmmsearch"
+      %{which hmmsearch && hmmsearch -h 2>&1 |head -n 2}
+    when "mafft"
+      %{which mafft && mafft -v 2>&1 |head -n 4 |tail -n 1}
+    when "gappa"
+      %{which gappa && gappa --version}
+    when "pplacer"
+      %{which pplacer && pplacer --version}
+    when "parallel"
+      %{which parallel && LANG=C parallel --version 2>&1 |head -n 1}
+    end
+    puts ""
+    puts "\e[1;32m===== check version: #{command}\e[0m"
+    puts ""
+    puts "$ #{str}"
+    ### run
+    puts `#{str}`
+    ### flush
+    $stdout.flush
+  }
 end
 # }}} procedures
 
 
 # {{{ task controller
 task :default do
-	### define tasks
+  ### define tasks
   tasks = []
-  tasks << "01-1a.validate_query"
+  tasks << "01-1a-A.validate_query"
+  tasks << "01-1a-B.parse_query_info"
   tasks << "01-1b.validate_refpkg"
   tasks << "01-2a.hmmsearch"
   tasks << "01-2b.parse_hmmsearch"
@@ -83,12 +84,13 @@ task :default do
   tasks << "01-4a.info"
   tasks << "01-4b.lwr"
   tasks << "01-4d.assign"  ## if ftax is given
-  tasks << "01-4e.extract" ## if ftax is given
   tasks << "01-4f.graft"
-  tasks << "01-4g.heat-tree"
   tasks << "01-4h.aligned_position" ## if fpos is given
-  tasks << "01-5a.krd"
   tasks << "01-6a.aa_feature"
+
+  # tasks << "01-4e.extract" ## if ftax is given ### memory requirement is too high for rep_2022-06-08
+  # tasks << "01-4g.heat-tree"
+  # tasks << "01-5a.krd"
 
   ### currently not used
   ### tasks << "01-4c.edpl"    ## high memory requirement. --> do not run
@@ -102,26 +104,27 @@ task :default do
     Tasks = tasks
   end
 
-	### constants from arguments
-	Odir      = ENV["outdir"]           ## output directory
-	OdirExist = ENV["outdir_exist"]     ## output directory exist? ("true" or "")
-	Fques     = ENV["query"]            ## query
-	Rpkgs     = ENV["refpkg"]           ## refpkg
-  Ncpu      = ENV["ncpus"].to_i       ## num of CPUs
-  Evalue    = ENV["evalue"].to_f      ## hmmsearch evalue threshold (default: 1e-5)
-  MinSeqLen = ENV["minseqlen"].to_i   ## minimum query length
-  MinHmmLen = ENV["minhmmlen"].to_i   ## hmmsearch minimum hit hmm length
-  C_size    = ENV["chunk_size"].to_i  ## chunk size
-  M_mafft   = ENV["mafft_method"]     ## FFT-NS-2 or E-INS-i
-  Ex_lvs    = ENV["extract_levels"]   ## clade/taxonomy level for 'gappa prepare extract' (default: 0)
-  Trim_opt  = ENV["trim_option"]      ## 'merge' (merge regions of hmmserach hits)  or 'largest' (take largest hit) (default: merge)
+  ### constants from arguments
+  Odir         = ENV["outdir"]            ## output directory
+  OdirExist    = ENV["outdir_exist"]      ## output directory exist? ("true" or "")
+  Fques        = ENV["query"]             ## query
+  Rpkgs        = ENV["refpkg"]            ## refpkg
+  Ncpu         = ENV["ncpus"].to_i        ## num of CPUs
+  Evalue       = ENV["evalue"].to_f       ## hmmsearch evalue threshold (default: 1e-5)
+  MinSeqLen    = ENV["minseqlen"].to_i    ## minimum query length
+  MinHmmLen    = ENV["minhmmlen"].to_i    ## hmmsearch minimum hit hmm length
+  MinHmmLenFrc = ENV["minhmmlenfrc"].to_f ## minimum fraction of hmmsearch hit hmm length
+  C_size       = ENV["chunk_size"].to_i   ## chunk size
+  M_mafft      = ENV["mafft_method"]      ## FFT-NS-2 or FFT-NS-i or E-INS-i
+  Ex_lvs       = ENV["extract_levels"]    ## clade/taxonomy level for 'gappa prepare extract' (default: 0)
+  Trim_opt     = ENV["trim_option"]       ## 'merge' (merge regions of hmmserach hits)  or 'largest' (take largest hit) (default: merge)
 
-	### check version
-	commands  = %w|hmmsearch mafft gappa pplacer ruby|
-	commands += %w|parallel| if Ncpu > 1
-	CheckVersion.call(commands)
+  ### check version
+  commands  = %w|hmmsearch mafft gappa pplacer ruby|
+  commands += %w|parallel| if Ncpu > 1
+  CheckVersion.call(commands)
 
-	### constants
+  ### constants
   Z         = 1_000_000 # hmmsearch data size for evalue calculation
   Errmsg    = "\e[1;31mError:\e[0m"
   Warmsg    = "\e[1;35mWarning:\e[0m"
@@ -156,18 +159,22 @@ task :default do
   ## Odir exist?
   $stderr.puts "\n\n#{Warmsg} output directory #{Odir} already exists. Overwrite it.\n\n" if OdirExist == "true"
 
-	### run
-	NumStep  = Tasks.size
-	Tasks.each.with_index(1){ |task, idx|
-		Rake::Task[task].invoke(idx)
-	}
+  ### run
+  NumStep  = Tasks.size
+  Tasks.each.with_index(1){ |task, idx|
+    Rake::Task[task].invoke(idx)
+  }
 end
 # }}} default (run all tasks)
 
 
 # {{{ tasks
-desc "01-1a.validate_query"
-task "01-1a.validate_query", ["step"] do |t, args|
+desc "01-1a-A.validate_query"
+task "01-1a-A.validate_query", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs   = []
+  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+
   ## validate query and make a copy
   fques = Fques.split(",").inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
   fques.map{ |fque|
@@ -188,55 +195,49 @@ task "01-1a.validate_query", ["step"] do |t, args|
   $stderr.puts ["", "", "\e[1;32m===== check query file (N=#{fques.size}) \e[0m"]
   raise("#{Errmsg} no query file detected.") if fques.size == 0
 
-  idx = 0
+  ### file name duplication check
   names = {}
-  mkdir_p PreQuedir
-  $fques = fques.inject([]){ |a, fque|
-    idx += 1
+  fques.each{ |fque|
     name = File.basename(fque).split(".")[0..-2]*"."
     raise("#{Errmsg} file name #{name} is not unique.") if names[name]
     names[name] = 1
-
-    ### parse fasta and check sequence length
-    numseq, numex = 0
-    ids = {}
-    fa  = "#{PreQuedir}/#{name}.fa"
-    open(fa, "w"){ |fw|
-      IO.read(fque).split(/^>/)[1..-1].each{ |ent|
-        lab, *seq = ent.split("\n")
-        id = lab.split(/\s+/)[0]
-        raise("#{Errmsg} sequence id #{id} is found twice. Please ensure that all sequence ids in query files are unique.") if ids[id]
-        ids[id] = 1
-        seq = seq.join.gsub(/\s+/, "")
-
-        # if seq =~ /U/
-        #   seq = seq.gsub("U", "X") ## "U" is not compatible with pplacer
-        #   $stderr.puts "#{id}: 'U' is converted to 'X'"
-        # end
-
-        if seq.size >= MinSeqLen 
-          numseq += 1 
-
-          ### [!!!] space at the end of comment line (">"+id+" ") is VERY IMPORTANT because chunkify parse last underscore + digit (e.g., _123) as abundance
-          ### see https://github.com/lczech/gappa/wiki/Subcommand:-chunkify
-          fw.puts [">"+id+" ", seq] 
-        else
-          numex += 1
-        end
-      }
-    }
-
-    h = { idx: idx, name: name, numseq: numseq, numtooshortseq: numex, fasta: fa, original: File.absolute_path(fque) }
-    $stderr.puts h.inspect
-    a << h
   }
 
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  mkdir_p PreQuedir
+  idx = 0
+  $fjsns = []
+  fques.each{ |fque|
+    ### parse fasta and check sequence length
+    idx += 1
+    name = File.basename(fque).split(".")[0..-2]*"."
+    fa   = "#{PreQuedir}/#{name}.fa"
+    fjsn = "#{fa}.json"
+
+    if !File.exist?(fa) or !File.exist?(fjsn)
+      outs << "ruby #{script} #{idx} #{MinSeqLen} #{name} #{fque} #{fa} #{fjsn}"
+    end
+
+    $fjsns << fjsn
+  }
+
+  next if outs.size == 0
+
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+end
+desc "01-1a-B.parse_query_info"
+task "01-1a-B.parse_query_info", ["step"] do |t, args|
+  $fques = []
+  $fjsns.each{ |fjsn|
+    sjsn = IO.readlines(fjsn)[0]
+    $fques << eval(sjsn)
+  }
 end
 desc "01-1b.validate_refpkg"
 task "01-1b.validate_refpkg", ["step"] do |t, args|
   ## valdiate refpkg (do not make copy)
-  rpkgs = Rpkgs.split(",").inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
+  ### [2022-06-15] sort files
+  rpkgs = Rpkgs.split(",").sort_by{ |path| File.basename(path) }.inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
   $stderr.puts ["", "", "\e[1;32m===== check refpkg (N=#{rpkgs.size}) \e[0m"]
   raise("#{Errmsg} no refpkg directory detected.") if rpkgs.size == 0
 
@@ -256,6 +257,17 @@ task "01-1b.validate_refpkg", ["step"] do |t, args|
     raise("#{Errmsg} #{rpkg} contains multiple .hmm files. #{rpkg}/*.hmm should be only one.") if fhmm.size > 1
     raise("#{Errmsg} #{fhmm[0]} contains .hmm file with multiple hmms. HMM should be only one per a file.") if IO.read(fhmm[0]).split(/\/\/\s+/).size > 1
 
+    ### perse LENG of fhmm
+    hmmlen = "0"
+    open(fhmm[0]){ |fr|
+      while l = fr.gets
+        if l =~ /^LENG\s+(\d+)/
+          hmmlen = $1
+          break
+        end
+      end
+    }
+
     ### [!!!] TODO: sequence (not name) in tree should be nonredundant
     ### [!!!] TODO: sequence name in tree should be same as sequence name in alignment
     ### [!!!] TODO: ftax format check
@@ -265,17 +277,17 @@ task "01-1b.validate_refpkg", ["step"] do |t, args|
     raise("#{Errmsg} refpkg name #{name} is not unique.") if names[name]
     names[name] = 1
 
-    h = { idx: idx, name: name, refpkg: rpkg, faln: fa[0], hmm: fhmm[0], ftax: ftax, fpos: fpos }
+    h = { idx: idx, name: name, refpkg: rpkg, faln: fa[0], hmm: fhmm[0], ftax: ftax, fpos: fpos, hmmlen: hmmlen }
     $stderr.puts h.inspect
     a << h
   }
 
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-2a.hmmsearch"
 task "01-2a.hmmsearch", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs   = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs   = []
 
   $fques.each{ |que|
     next if que[:numseq] == 0
@@ -290,14 +302,17 @@ task "01-2a.hmmsearch", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-2b.parse_hmmsearch"
 task "01-2b.parse_hmmsearch", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs   = []
-	script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs   = []
+  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+
+  pkgs    = $rpkgs.map{ |pkg| pkg[:name] }
+  hmmlens = $rpkgs.map{ |pkg| pkg[:hmmlen] }
 
   $fques.each{ |que|
     fa    = que[:fasta]
@@ -307,18 +322,18 @@ task "01-2b.parse_hmmsearch", ["step"] do |t, args|
     ## output:
     ## "#{Resdir}/refpkg/#{pkg[:name]}/each/query/{full_length,trimmed}/#{que[:name]}.fa" 
     ## "#{idir}/evalues.tsv" (best hit sequences for phylogenetic placement)
-    outs << "ruby #{script} #{Trim_opt} #{Evalue} #{MinHmmLen} #{fa} #{idir} #{Resdir}"
+    outs << "ruby #{script} #{Trim_opt} #{Evalue} #{MinHmmLen} #{MinHmmLenFrc} #{fa} #{idir} #{Resdir} #{hmmlens*","} #{pkgs*" "}"
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-2c.merge_fasta"
 task "01-2c.merge_fasta", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
+  PrintStatus.call(args.step, NumStep, "START", t)
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	outs   = []
+  outs   = []
 
   $rpkgs.each{ |pkg|
     odir = "#{Resdir}/refpkg/#{pkg[:name]}/all/query"; mkdir_p odir unless File.directory?(odir)
@@ -344,13 +359,13 @@ task "01-2c.merge_fasta", ["step"] do |t, args|
     }
   }
 
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-3a.chunkify"
 task "01-3a.chunkify", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa prepare chunkify --threads 1 --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -364,21 +379,21 @@ task "01-3a.chunkify", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-3b.mafft_add"
 task "01-3b.mafft_add", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
 
-	script = "#{File.dirname(__FILE__)}/script/U2X.rb" ## "U" --> "X" in aligned fasta
+  script = "#{File.dirname(__FILE__)}/script/U2X.rb" ## "U" --> "X" in aligned fasta
 
   $rpkgs.each{ |pkg|
     fas = Dir["#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"].sort_by{ |i| File.basename(i).gsub(/^chunk_/, "").gsub(/\.fasta$/, "").to_i }
     next if fas.size == 0
 
-    ### [!!!] faln hould be nonredundant (sequences are same as tree) --> TODO: validation process
+    ### [!!!] faln should be nonredundant (sequences are same as tree) --> TODO: validation process
     faln = pkg[:faln]
 
     fas.each{ |fa|
@@ -388,17 +403,24 @@ task "01-3b.mafft_add", ["step"] do |t, args|
       fout  = "#{odir}/mafft_add.fa"
       ftmp  = "#{odir}/mafft_add.U2X.fa" ## used only by pplacer ('U' --> 'X')
 
+      add   = "--add" ## --add or --addfragments
+
       ## [!!!] --maxiterate > 0 is not compatible with --keeplength
       if M_mafft == "FFT-NS-2" 
         option = "--retree 2"  ## fast and rough
+        add    = "--addfragments"
+      elsif M_mafft == "FFT-NS-i" 
+        option = "--maxiterate 2"  ## fast and rough
+        add    = "--addfragments"
       elsif M_mafft == "E-INS-i"
         option = "--genafpair" ## slow and accurate
+        add    = "--add"
       else
         raise("#{Errmsg} --mafft-method #{M_mafft} is not available.")
       end
 
       out   = []
-      out  << "mafft #{option} --anysymbol --thread 1 --add #{fa} --keeplength #{faln} >#{fout} 2>#{flog}" ## compatible with "U"
+      out  << "mafft #{option} --anysymbol --thread 1 #{add} #{fa} --keeplength #{faln} >#{fout} 2>#{flog}" ## compatible with "U"
       out  << "ruby #{script} #{fout} #{ftmp}"
       outs << out*" && "
 
@@ -407,13 +429,13 @@ task "01-3b.mafft_add", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-3c.pplacer"
 task "01-3c.pplacer", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
 
   $rpkgs.each{ |pkg|
     fas = Dir["#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/mafft_add.U2X.fa"].sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
@@ -429,17 +451,17 @@ task "01-3c.pplacer", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-3d.unchunkify"
 task "01-3d.unchunkify", ["step"] do |t, args|
   ### [!!!] [2020-11-17] Use of parallel cause "core dump". DO NOT USE parallel
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa prepare unchunkify --threads 1 --allow-file-overwriting"
 
-	script = "#{File.dirname(__FILE__)}/script/merge_jplace.rb"
+  script = "#{File.dirname(__FILE__)}/script/merge_jplace.rb"
 
   $rpkgs.each{ |pkg|
     fplcs = "#{Cnkdir}/#{pkg[:name]}/placement/chunk_*/*.jplace" ## mafft_add.jplace
@@ -461,18 +483,18 @@ task "01-3d.unchunkify", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
+  WriteBatch.call(t, Jobdir, outs)
 
   ### [!!!] [2020-11-17] DO NOT USE PARALLEL
-	# RunBatch.call(t, Jobdir, Ncpu, Logdir)
-	RunBatch.call(t, Jobdir, 1, Logdir)
+  # RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  RunBatch.call(t, Jobdir, 1, Logdir)
 end
 desc "01-3e.unchunkify_alignment"
 task "01-3e.unchunkify_alignment", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
 
-	script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 
   $rpkgs.each{ |pkg|
     fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta" ## trimmed seq, hashed 
@@ -491,13 +513,13 @@ task "01-3e.unchunkify_alignment", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4a.info"
 task "01-4a.info", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa examine info --threads 1 --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -523,13 +545,13 @@ task "01-4a.info", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4b.lwr"
 task "01-4b.lwr", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa examine lwr --threads 1 --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -558,13 +580,13 @@ task "01-4b.lwr", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4c.edpl"
 task "01-4c.edpl", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa examine edpl --no-list-file --threads 1 --allow-file-overwriting"
   ### [!!!] --no-list-file: need to limit memory usage.
   ### If set, do not write out the EDPL per pquery, but just the histogram file. As the list needs to keep all pquery names in memory (to get the correct order), the memory requirements might be too large. In that case, this option can help.
@@ -599,14 +621,16 @@ task "01-4c.edpl", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4d.assign"
 task "01-4d.assign", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
-  cmd  = "gappa examine assign --threads 1 --krona --allow-file-overwriting"
+  ### option might be changed between v0.6.0 and v0.7.1
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
+  # cmd  = "gappa examine assign --threads 1 --per-query-results --krona --allow-file-overwriting" ### for v0.7.1
+  cmd  = "gappa examine assign --threads 1 --krona --allow-file-overwriting" ### for v0.6.0
 
   $rpkgs.each{ |pkg|
     bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
@@ -634,16 +658,16 @@ task "01-4d.assign", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  # next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4e.extract"
 task "01-4e.extract", ["step"] do |t, args|
   next if $ex_lvs == [-1] ### do not extract
 
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa prepare extract --threads 1 --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -656,8 +680,8 @@ task "01-4e.extract", ["step"] do |t, args|
     max_lv = IO.readlines(ftax).map{ |l| i = l.chomp.split("\t")[1]; i ? i.split(/\s*;\s*/).size : 0 }.sort[-1]
     next if max_lv == 0
     lvs = if $ex_lvs == [0] then (1..max_lv).to_a
-          else $ex_lvs.select{ |i| i <= max_lv }
-          end
+    else $ex_lvs.select{ |i| i <= max_lv }
+    end
 
     lvs.each{ |lv|
       ### all query files
@@ -693,13 +717,13 @@ task "01-4e.extract", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4f.graft"
 task "01-4f.graft", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa examine graft --threads 1 --fully-resolve --name-prefix Q_ --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -726,18 +750,19 @@ task "01-4f.graft", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4g.heat-tree"
 task "01-4g.heat-tree", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  ### option might be changed between v0.6.0 and v0.7.1
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   opt_svg = "--svg-tree-shape circular --color-list viridis --reverse-color-list --svg-tree-stroke-width 3 --svg-tree-ladderize"
   prefix  = "tree"
   cmd  = "gappa examine heat-tree --threads 1 #{opt_svg} --tree-file-prefix #{prefix} --write-newick-tree --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
 
-	script = "#{File.dirname(__FILE__)}/script/nexus2itol.rb"
+  script = "#{File.dirname(__FILE__)}/script/nexus2itol.rb"
 
   $rpkgs.each{ |pkg|
     bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
@@ -763,15 +788,15 @@ task "01-4g.heat-tree", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-4h.aligned_position"
 task "01-4h.aligned_position", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
 
-	script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 
   $rpkgs.each{ |pkg|
     bdir    = "#{Resdir}/refpkg/#{pkg[:name]}"
@@ -805,13 +830,13 @@ task "01-4h.aligned_position", ["step"] do |t, args|
   }
 
   # next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-5a.krd"
 task "01-5a.krd", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa analyze krd --threads 1 --allow-file-overwriting"
 
   $rpkgs.each{ |pkg|
@@ -827,13 +852,13 @@ task "01-5a.krd", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-5b.edgepca"
 task "01-5b.edgepca", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa analyze edgepca --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
 
@@ -850,13 +875,13 @@ task "01-5b.edgepca", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-5c.squash"
 task "01-5c.squash", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa analyze squash --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
   ## [!!!] this task will generate (2n - 2) * 3 tree files where n is num of input query fasta files.
@@ -874,13 +899,13 @@ task "01-5c.squash", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-5d.dispersion"
 task "01-5d.dispersion", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
   cmd  = "gappa analyze dispersion --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
 
@@ -897,15 +922,15 @@ task "01-5d.dispersion", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 desc "01-6a.aa_feature"
 task "01-6a.aa_feature", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	outs = []
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs = []
 
-	script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 
   $rpkgs.each{ |pkg|
     bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
@@ -932,7 +957,7 @@ task "01-6a.aa_feature", ["step"] do |t, args|
   }
 
   next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-	WriteBatch.call(t, Jobdir, outs)
-	RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
 # }}} tasks

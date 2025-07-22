@@ -69,10 +69,11 @@ $ $PROGNAME [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
     -e, --evalue     [num] (default: 1e-5) -- evalue threshold of hmmsearch
     --minseqlen      [int] (default: 0)    -- minimum query aa length
     --minhmmlen      [int] (default: 0)    -- minimum hmm length in alignment of hmmsearch
-    --trim-option    [merge or largest] (default: merge) -- take merged regions of hmmsearch hits (if multiple) or take largest hit
+    --minhmmlenfrc   [float between 0 and 1] (default: 0) -- minimum fraction of hmm length in alignment of hmmsearch
+    --trim-option    [merge or largest] (default: merge)  -- take merged regions of hmmsearch hits (if multiple) or take largest hit
 
   (align)
-    --mafft-method   [FFT-NS-2 or E-INS-i] (default: FFT-NS-2) -- mafft method used with '--add' and '--keeplength'.
+    --mafft-method   [FFT-NS-2|FFT-NS-i|E-INS-i] (default: E-INS-i) -- mafft method used with '--add' and '--keeplength'.
                                                                   It can be either '--retree 2' (FFT-NS-2, faster) or '--genafpair' (E-INS-i, more accurate).
                                                                   For more details, see https://mafft.cbrc.jp/alignment/software/algorithms/algorithms.html.
 
@@ -155,6 +156,13 @@ do
 			minhmmlen="$2"
 			shift 2
 			;;
+		'--minhmmlenfrc' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
+			fi
+			minhmmlenfrc="$2"
+			shift 2
+			;;
 		'--trim-option' )
 			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
 				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
@@ -212,8 +220,9 @@ ncpus="${ncpus:-1}"
 chunk_size="${chunk_size:-3000}"
 minseqlen="${minseqlen:-0}"
 minhmmlen="${minhmmlen:-0}"
+minhmmlenfrc="${minhmmlenfrc:-0}"
 trim_option="${trim_option:-merge}"
-mafft_method="${mafft_method:-FFT-NS-2}"
+mafft_method="${mafft_method:-E-INS-i}"
 extract_levels="${extract_levels:-0}"
 
 re='^[0-9]+$'
@@ -229,8 +238,8 @@ elif [[ ! -d "$outdir" &&  -e "$outdir" ]] ; then
 	echo "$Errmsg  -o, --outdir $outdir already exists and not directory (is it a file?). " 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
 elif [[ ! $chunk_size =~ $re ]] ; then
 	echo "$Errmsg  -c, --chunk-size '$chunk_size' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[   "$mafft_method" != "FFT-NS-2" ]] && [[ "$mafft_method" != "E-INS-i" ]] ; then
-	echo "$Errmsg  --mafft-method should be either FFT-NS-2 or E-INS-i ('$mafft_method' is given)." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
+elif [[   "$mafft_method" != "FFT-NS-2" ]] && [[ "$mafft_method" != "FFT-NS-i" ]] && [[ "$mafft_method" != "E-INS-i" ]] ; then
+	echo "$Errmsg  --mafft-method should be either FFT-NS-2 or FFT-NS-i or E-INS-i ('$mafft_method' is given)." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
 elif [[ ! $ncpus =~ $re ]] ; then
 	echo "$Errmsg  --ncpus '$ncpus' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
 elif [[ ! $minseqlen =~ $re ]] ; then
@@ -322,7 +331,7 @@ trap 'after_run 1' 1 2 3 9 15
 ## run
 rake -f $rakefile \
 	outdir="$outdir" query="$query" refpkg="$refpkg" outdir_exist="$outdir_exist" \
-	evalue="$evalue" minseqlen="$minseqlen" minhmmlen="$minhmmlen" \
+	evalue="$evalue" minseqlen="$minseqlen" minhmmlen="$minhmmlen" minhmmlenfrc="$minhmmlenfrc" \
 	mafft_method="$mafft_method" extract_levels="$extract_levels" trim_option="$trim_option" \
 	chunk_size="$chunk_size" ncpus="$ncpus" only_detect="$only_detect" \
 	2>&1 |tee -a $flog

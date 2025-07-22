@@ -17,16 +17,22 @@ IO.readlines(fpos).each.with_index(1){ |l, idx|
 
 ## parse fasn --- assign result (might not exist --> [!!!] in this case, gid2info is empty) 
 gid2info = {} ## (name LWR fract aLWR afract taxopath) --> parse fract, taxpath
+
+gid2set  = {} ## consider redundant sequence (ERR315859.153160.1_2_5_1 has redundant mapping result 'ERR315859.153160.1_2_5_1 ;ERR315859.32048204.1_3_6_1')
 if File.exist?(fasn)
   IO.readlines(fasn)[1..-1].each{ |l|
     gids, fract, tax = l.chomp.split("\t").values_at(0, 2, 5)
 
-    gids = gids.split(";").map{ |gid| ## parse ';' separated ids
-      gid.strip.split(/\s+/)[0] ## exclude additional info
-    }
+    # gids = gids.split(";").map{ |gid| ## parse ';' separated ids
+    #   gid.strip.split(/\s+/)[0] ## exclude additional info
+    # }
+    gids = gids.split(" ;").map{ |gid| gid.strip }
+
     gids.each{ |gid|
       gid2info[gid] ||= [] ## store [fract, tax]
       gid2info[gid] << [fract, tax]
+
+      gid2set[gid] = gids
     }
   }
 
@@ -67,7 +73,12 @@ open("#{odir}/aligned_position.tsv", "w"){ |fw|
       ## add taxon/clade info
       out << (gid2info[gid] ? gid2info[gid] : ["NA", "NA"])
 
-      fw.puts out*"\t"
+      gid, *info = out
+
+      raise("gid: #{gid} - not found in gid2set[gid].") unless gid2set[gid]
+      gid2set[gid].each{ |_gid| ### make multiple lines if member of a set is multiple.
+        fw.puts [_gid, info]*"\t"
+      }
     end
 
     flag = 1 if ref_last == gid ## make flag of ref --> que

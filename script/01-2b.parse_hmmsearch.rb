@@ -1,9 +1,11 @@
 
 require 'rake'
 
-Trim_opt, e_thre, minhmmlen, fa, idir, resdir = ARGV
-E_thre = e_thre.to_f
-MinHmmLen = minhmmlen.to_i
+Trim_opt, e_thre, minhmmlen, minhmmlenfrc, fa, idir, resdir, hmmlens, *pkgs = ARGV
+E_thre       = e_thre.to_f
+minhmmlen0   = minhmmlen.to_i
+MinHmmLenFrc = minhmmlenfrc.to_f
+HmmLens      = hmmlens.split(",")
 
 # {{{ range function
 class Range
@@ -66,7 +68,8 @@ def merge_ranges(ranges) ## ranges = [3..300, 320..500, 504..732, ...]
 end
 # }}} range function
 
-fins = Dir["#{idir}/*.out"]
+### [2022-06-15] sort files
+fins  = pkgs.map{ |pkg| Dir["#{idir}/#{pkg}.out"] }.flatten
 qname = File.basename(fa).split(".")[0..-2]*"." ## query name
 
 evalues    = Hash.new{ |h, i| h[i] = Array.new(fins.size, "-") } ## store full i-Evalue
@@ -74,12 +77,24 @@ domtblout  = Hash.new{ |h, i| h[i] = Array.new(fins.size, nil) }
 hmm_coords = Hash.new{ |h, i| h[i] = Array.new(fins.size, nil) } ## hit hmm coordinates
 ali_coords = Hash.new{ |h, i| h[i] = Array.new(fins.size, nil) } ## hit ali coordinates
 labs       = []
+minhmmlens = [] ### minhmmlen
 
 fins.each.with_index{ |fin, idx|
   labs << File.basename(fin).gsub(/\.out$/, "") ## refpkg label
   n_ent = 0
   flag  = ""
   gid   = ""
+
+  ### parse MinHmmLen
+  _hmmlen    = HmmLens[idx].to_i
+  _minhmmlen = _hmmlen * MinHmmLenFrc ### minhmmlen defined by MinHmmLenFrc
+  if minhmmlen0 < _minhmmlen
+    minhmmlen = _minhmmlen
+  else
+    minhmmlen =  minhmmlen0
+  end
+  p [fin, idx, _hmmlen, minhmmlen0, _minhmmlen, minhmmlen]
+  minhmmlens << minhmmlen
 
 # Query:       1-cysPrx_C  [M=40]
 # Accession:   PF10417.9
@@ -149,8 +164,10 @@ evalues.each_key{ |gid|
         ali_co = [ali_co[_idx]] ## take the corresponding hit
       else raise("unknown trim_opt: #{Trim_opt}")
       end
+
       hmmlen = hmm_co.map{ |r| r.max - r.min + 1 }.inject(&:+)
-      if hmmlen < MinHmmLen ## hmm hit length is not enough
+
+      if hmmlen < minhmmlens[idx] ## hmm hit length is not enough
         evalues[gid][idx]    = "-"
         hmm_coords[gid][idx] = nil
         ali_coords[gid][idx] = nil
