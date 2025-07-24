@@ -1,17 +1,17 @@
 
-# PPP - a Pipeline for Phylogenetic Placement
+# PiPP - a Pipeline for Phylogenetic Placement
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](/LICENSE)
 [![size](https://img.shields.io/github/size/webcaetano/craft/build/phaser-craft.min.js.svg)]()
 
-## currently PPP is beta version. Any specification might be changed in a future version.
-PPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
+## currently PiPP is beta version. Any specification might be changed in a future version.
+PiPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
 
 ## install (use conda environment)
 
 ### [1] make conda environment and install packages
 ```
-$ conda create -n PPP -y && conda activate PPP
+$ conda create -n PiPP -y && conda activate PiPP
 ```
 
 ### [2] install packages
@@ -23,11 +23,11 @@ $ conda install -y -c bioconda pplacer=1.1.alpha19   ### <-- does not work for O
 
 ## usage 
 ```
-### PPP ver 0.1.0 (2020-05-11) ###
+### PiPP ver 0.1.0 (2020-05-11) ###
 
 [description]
-PPP - Pipeline for phylogenetic placement.
-PPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
+PiPP - Pipeline for phylogenetic placement.
+PiPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
 
 1. prefilter query sequences by similarity detection (hmmsearch). Queries and references should be protein sequences at this moment.
 2. align query sequences to a given reference alignment ('mafft --add' [or 'hmmalign': not implemented yet])
@@ -38,7 +38,7 @@ PPP is developed as a tool for phylogenetic placement onto a clade or taxonomy d
   c. extract placed sequences and placement file for each  clade/taxonomy ('gappa prepare extract')
 
 [usage]
-$ PPP [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
+$ PiPP [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
 
 [dependencies]
 - hmmer (ver >= 3.0)
