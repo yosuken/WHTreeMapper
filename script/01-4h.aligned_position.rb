@@ -1,4 +1,6 @@
 
+STDOUT.sync = true; STDERR.sync = true
+
 odir, fpos, fallaln, frefaln, fasn = ARGV
 
 ## parse fpos
@@ -15,42 +17,41 @@ IO.readlines(fpos).each.with_index(1){ |l, idx|
   }
 }
 
-## parse fasn --- assign result (might not exist --> [!!!] in this case, gid2info is empty) 
-gid2info = {} ## (name LWR fract aLWR afract taxopath) --> parse fract, taxpath
-
-gid2set  = {} ## consider redundant sequence (ERR315859.153160.1_2_5_1 has redundant mapping result 'ERR315859.153160.1_2_5_1 ;ERR315859.32048204.1_3_6_1')
+## parse fasn --- assign result (might not exist --> [!!!] in this case, reg2info is empty) 
+reg2info = {} ## (name LWR fract aLWR afract taxopath) --> parse fract, taxpath
+reg2set  = {} ## consider redundant sequence (ERR315859.153160.1_2_5_1 has redundant mapping result 'ERR315859.153160.1_2_5_1 ;ERR315859.32048204.1_3_6_1')
 if File.exist?(fasn)
   IO.readlines(fasn)[1..-1].each{ |l|
-    gids, fract, tax = l.chomp.split("\t").values_at(0, 2, 5)
+    regs, fract, tax = l.chomp.split("\t").values_at(0, 2, 5)
 
-    # gids = gids.split(";").map{ |gid| ## parse ';' separated ids
-    #   gid.strip.split(/\s+/)[0] ## exclude additional info
+    # regs = regs.split(";").map{ |reg| ## parse ';' separated ids
+    #   reg.strip.split(/\s+/)[0] ## exclude additional info
     # }
-    gids = gids.split(" ;").map{ |gid| gid.strip }
+    regs = regs.split(/\s*;/).map{ |reg| reg.strip }
 
-    gids.each{ |gid|
-      gid2info[gid] ||= [] ## store [fract, tax]
-      gid2info[gid] << [fract, tax]
+    regs.each{ |reg|
+      reg2info[reg] ||= [] ## store [fract, tax]
+      reg2info[reg] << [fract, tax]
 
-      gid2set[gid] = gids
+      reg2set[reg] = regs
     }
   }
 
-  gid2info.each_key{ |gid|
-    a = gid2info[gid]
+  reg2info.each_key{ |reg|
+    a = reg2info[reg]
     best = a.sort_by{ |i| - i[0].to_f }[0] ## extract if fract (fract of LWR) is higher
-    gid2info[gid] = best ## only highest likelihood hit
+    reg2info[reg] = best ## only highest likelihood hit
   }
 else 
   $stderr.puts "assign result: #{fasn} does not exist. generate result without taxon/clade assignment info."
 end
 
-## parse last gid in frefaln
+## parse last reg in frefaln
 ref_last = ""
 IO.read(frefaln).split(/^>/)[1..-1].each{ |ent|
-  lab, *seq = ent.split("\n")
-  gid = lab.split(/\s+/)[0]
-  ref_last = gid ## lastly, the last gid will be stored
+  lab, *_ = ent.split("\n")
+  reg = lab.split(/\s+/)[0]
+  ref_last = reg ## lastly, the last reg will be stored
 }
 
 ## parse fallaln
@@ -61,26 +62,27 @@ open("#{odir}/aligned_position.tsv", "w"){ |fw|
 
   IO.read(fallaln).split(/^>/)[1..-1].each{ |ent|
     lab, *seq = ent.split("\n")
-    gid = lab.split(/\s+/)[0]
+    reg = lab.split(/\s+/)[0]
     seq = seq.join.gsub(/\s+/, "")
 
     if flag == 1
-      out = [gid]
+      out = [reg]
 
       ## parse amino acids in specified position
       lab2pos.each{ |lab, pos| out << pos.map{ |i| seq[i-1] }*"," }
 
       ## add taxon/clade info
-      out << (gid2info[gid] ? gid2info[gid] : ["NA", "NA"])
+      out << (reg2info[reg] ? reg2info[reg] : ["NA", "NA"])
 
-      gid, *info = out
+      reg, *info = out
+      fw.puts [reg, info]*"\t"
 
-      raise("gid: #{gid} - not found in gid2set[gid].") unless gid2set[gid]
-      gid2set[gid].each{ |_gid| ### make multiple lines if member of a set is multiple.
-        fw.puts [_gid, info]*"\t"
-      }
+      # raise("reg: #{reg} - not found in reg2set[reg].") unless reg2set[reg]
+      # reg2set[reg].each{ |_reg| ### make multiple lines if member of a set is multiple.
+      #   fw.puts [_reg, info]*"\t"
+      # }
     end
 
-    flag = 1 if ref_last == gid ## make flag of ref --> que
+    flag = 1 if ref_last == reg ## make flag of ref --> que
   }
 }

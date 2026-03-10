@@ -1,340 +1,507 @@
-#!/bin/bash
+#!/usr/bin/env ruby
 
-PROGNAME=$(basename $0)
-VERSION="0.1.0"
-Errmsg="[1;31m[error][0m"
-Sccmsg="[1;32m[success][0m"
-Modidate="2020-05-11"
-incmd="$0 $*"
+STDOUT.sync = true ### for real-time output
 
+require 'optparse'
+require 'rake'
+# require 'fileutils'
+# require 'time'
 
-# {{{ usage
-read -r -d '' usage <<EOF
-[1;35m### $PROGNAME ver $VERSION ($Modidate) ###[0m
+###########################
+### entry point of PiPP ###
+###########################
 
-[1;32m[description][0m
-$PROGNAME - Pipeline for phylogenetic placement.
-$PROGNAME is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
+# {{{ class PiPP
+class PiPP
+  VERSION  = "0.3.0"
+  MODIDATE = "2025-09-27"
+  
+  # ANSI color codes
+  ERRMSG = "\e[1;31m[error]\e[0m"
+  SCCMSG = "\e[1;32m[success]\e[0m"
+  
+  # {{{ def initialize
+  def initialize
+    @options = {
+      # Required options
+      query: nil,
+      refpkg: nil,
+      outdir: nil,
+      
+      # Optional flags
+      overwrite: false,
+      only_detect: false,
+      
+      # Prefilter options
+      evalue:       1e-5,
+      evaluedom:    1e-2,
+      minseqlen:    0,
+      minhmmlen:    0,
+      minhmmcov:    0.0,
+      minalilen:    0,
+      minalicov:    0.0,
+      minhmmlendom: 0,
+      minhmmcovdom: 0.0,
+      minalilendom: 0,
+      minalicovdom: 0.0,
+      # trim_option: "merge",
+      
+      # Placer
+      placer: "pplacer",
 
-1. prefilter query sequences by similarity detection (hmmsearch). Queries and references should be protein sequences at this moment.
-2. align query sequences to a given reference alignment ('mafft --add' [or 'hmmalign': not implemented yet])
-3. perform phylogenetic placement ('pplacer' [or 'epa-ng': not implemented yet]) with efficient parallelization ('gappa prepare chunkify' and 'gappa prepare unchunkify')
-4. analysis of placed sequences 
-  a. assign clade/taxonomy and generate statistics ('gappa examine assign')
-  b. extract placed sequences and placement file for each  clade/taxonomy ('gappa prepare extract')
-  c. extract placed sequences and placement file for each  clade/taxonomy ('gappa prepare extract')
+      # Aligner
+      aligner: "witch-ng",
 
-[1;32m[usage][0m
-$ $PROGNAME [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
+      # Alignment options
+      mafft_method: "E-INS-i",
 
-[1;32m[dependencies][0m
-- hmmer (ver >= 3.0)
-- mafft (tested by 7.453)
-- gappa (tested by 0.6.0)
-- pplacer (tested by 1.1.alpha19)
-- ruby (ver >= 2.0) 
+      # EPA-ng model (only when --placer epa-ng is selected)
+      epa_ng_model: nil,
+      
+      # Extract options
+      extract_levels: "0",
+      
+      # Computation options
+      chunk_size: 10000,
+      ncpus: 1
+    }
+    
+    @progname   = File.basename($0)
+    @progpath   = File.absolute_path($0)
+    @stime      = Time.now
+    @stime_str  = @stime.strftime("%Y-%m-%d_%H:%M:%S")
+    @script_dir = File.dirname(File.expand_path($0))
+    @incmd      = "#{$0} #{ARGV.join(' ')}"
+  end
+  # }}} def initialize
+  
+  # {{{ def usage
+  def usage
+    <<~EOF
+    \e[1;35m### #{@progname} ver #{VERSION} (#{MODIDATE}) ###\e[0m
 
-[1;32m[options][0m
-  (general)
-    -h, --help
-    -v, --version
+    #{@progname} - Pipeline for phylogenetic placement.
+    #{@progname} is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below.
+    
+    1. prefilter query sequences by similarity detection (hmmsearch). Queries and references should be protein sequences at this moment.
+    2. align query sequences to a given reference alignment ('witch-ng', 'mafft --add', or 'mafft --addfragments')
+    3. perform phylogenetic placement ('pplacer', 'apples-2', or 'epa-ng') with efficient parallelization using 'gappa prepare chunkify' and 'gappa prepare unchunkify'
+    4. analysis of placed sequences 
+      a. assign clade/taxonomy and generate statistics ('gappa examine assign')
+      b. extract placed sequences and placement file for each clade/taxonomy ('gappa prepare extract')
+      c. extract placed sequences and placement file for each clade/taxonomy ('gappa prepare extract')
+    
+    \e[1;32m[usage]\e[0m
+    $ #{@progname} [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
+    
+    \e[1;32m[dependencies]\e[0m
+    - ruby (ver >= 2.0) 
+    - hmmer (ver >= 3.0)
+    - mafft (tested by 7.453 and 7.520)
+    - gappa (tested by 0.6.0)
+    - pplacer (tested by 1.1.alpha19)
+    - witch-ng (ver >= 0.0.4)
+    
+    \e[1;32m[output files]\e[0m
+      result/<refpkg name>/{all,each}/{seq,alignment,placement,assign,extract,...} -- result of placement and further analysis
 
-  (file/directory)
-    -q, --query      [file(s)] (required)  -- query sequence file(s) (currently protein only)
-                                              Multiple query file can be specfied with wildcard (e.g., 'dir/*.fa', quote required) or comma separated values (e.g., A.fa,B.fa).
-                                              File names should be unique (used as output labels).
-    -r, --refpkg     [dir(s)] (required)   -- reference package(s) made by taxtastic as 'taxit create -P <name> --tree-file <newick file> --tree-stats <file>', for example.
-                                              The directory must contain additional 2 files:
-                                              - aligned sequence (.fa, .mfa, or .fasta),
-                                              - its hmm model (.hmm, made by 'hmmbuild')
-                                              For full functionality, it is recommended that the directory contains additional 2 files:
-                                              - taxon file ('taxon.tsv' -- 1. sequence_id, 2. clade or taxonomy) used by '--taxon-file <tsv>' of 'gappa examine assign'
-                                              - alignment check file ('position.tsv' -- 1. label, 2. position(s) in alignment, which can be multiple per a label by using ',' as a separator)
-                                                to check important positions in sequence alignment
+    \e[1;32m[options]\e[0m
+    EOF
+  end
+  # }}} def usage
+  
+  # {{{ def parse_options
+  def parse_options
+    parser = OptionParser.new do |opts|
+      opts.banner = usage
+      
+      # {{{ File/directory options
+      opts.on("[File/directory]")
+      opts.on("-q", "--query FILE(S)", "Query sequence file(s) (protein fasta, can be gzipped) [required]") do |v|
+        @options[:query] = v
+      end
+      
+      opts.on("-r", "--refpkg DIR(S)", "Reference package(s) made by taxtastic [required]") do |v|
+        @options[:refpkg] = v
+      end
+      
+      opts.on("-o", "--outdir PATH", "Output directory [required]") do |v|
+        @options[:outdir] = v
+      end
+      
+      opts.on("--[no-]overwrite", "Overwrite output directory (default: overwrite)") do
+        @options[:overwrite] = true
+      end
+      # }}}
+      
+      # {{{ Task options
+      opts.on("\n[Task]")
 
-                                              Multiple Reference packages can be specfied with wildcard (e.g., 'dir/*', quate required) or comma separated values (e.g., A,B).
-                                              Directory names should be unique (used as output labels).
-                                              Note that each query is placed onto at most one tree that is most significantly related among refpkgs (in terms of hmmsearch evalue).
+      opts.on("--only-detect", "Only detect homologous regions of input sequences using hmmsearch") do
+        @options[:only_detect] = true
+      end
+      # }}}
+      
+      # {{{ Prefilter options
+      opts.on("\n[Prefilter (result cutoffs)]")
+      opts.on("-e", "--evalue NUM", Float, "E-value threshold of hmmsearch (default: 1e-5)") do |v|
+        @options[:evalue] = v
+      end
+      
+      opts.on("--minseqlen INT", Integer, "set a cutoff of minimum amino acid length of input sequences (default: 0)") do |v|
+        @options[:minseqlen] = v
+      end
+      
+      opts.on("--minhmmlen INT", Integer, "Minimum hmm hit length in linked result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmlen] = v
+      end
+      
+      opts.on("--minhmmcov FLOAT", Float, "Minimum fraction of hmm length in linked result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmcov] = v
+      end
+      
+      opts.on("--minalilen INT", Integer, "Minimum hmm hit length in linked result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmlen] = v
+      end
+      
+      opts.on("--minalicov FLOAT", Float, "Minimum fraction of hmm length in linked result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmcov] = v
+      end
 
-                                              Further information
-                                              - taxtastic: https://github.com/fhcrc/taxtastic
-                                              - gappa examine assign: https://github.com/fhcrc/taxtasti://github.com/lczech/gappa/wiki/Subcommand:-assign 
-    -o, --outdir     [path] (required)     -- output directory (should not exist unless '--overwrite' is specified)
-    --overwrite      [bool]                -- overwrite output directory
+      opts.on("\n[Prefilter (domain-level cutoffs)]")
+      opts.on("--evaluedom NUM", Float, "Domain E-value threshold of hmmsearch (default: 1e-2)") do |v|
+        @options[:evaluedom] = v
+      end
+      
+      opts.on("--minhmmlendom INT", Integer, "Minimum hmm hit length in domain-level result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmlen] = v
+      end
+      
+      opts.on("--minhmmcovdom FLOAT", Float, "Minimum fraction of hmm length in domain-level result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmcov] = v
+      end
+      
+      opts.on("--minalilendom INT", Integer, "Minimum hmm hit length in domain-level result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmlen] = v
+      end
+      
+      opts.on("--minalicovdom FLOAT", Float, "Minimum fraction of hmm length in domain-level result of hmmsearch (default: 0)") do |v|
+        @options[:minhmmcov] = v
+      end
+      # }}}
 
-  (mode)
-    --only-detect    [bool]                -- only detect target sequence and extract hit region
+      # {{{ Alignment options
+      opts.on("\n[Alignment]")
 
-  (prefilter)
-    -e, --evalue     [num] (default: 1e-5) -- evalue threshold of hmmsearch
-    --minseqlen      [int] (default: 0)    -- minimum query aa length
-    --minhmmlen      [int] (default: 0)    -- minimum hmm length in alignment of hmmsearch
-    --minhmmlenfrc   [float between 0 and 1] (default: 0) -- minimum fraction of hmm length in alignment of hmmsearch
-    --trim-option    [merge or largest] (default: merge)  -- take merged regions of hmmsearch hits (if multiple) or take largest hit
+      opts.on("--aligner OPTION", ["witch-ng", "mafft-add"], "query sequence aligner (default: witch-ng)") do |v|
+        @options[:aligner] = v
+      end
 
-  (align)
-    --mafft-method   [FFT-NS-2|FFT-NS-i|E-INS-i] (default: E-INS-i) -- mafft method used with '--add' and '--keeplength'.
-                                                                  It can be either '--retree 2' (FFT-NS-2, faster) or '--genafpair' (E-INS-i, more accurate).
-                                                                  For more details, see https://mafft.cbrc.jp/alignment/software/algorithms/algorithms.html.
+      opts.on("--mafft-method METHOD", ["E-INS-i", "FFT-NS-i", "FFT-NS-2", "FFT-NS-i_addfragments", "FFT-NS-2_addfragments"],
+        "MAFFT add method (default: E-INS-i)") do |v|
+        @options[:mafft_method] = v
+      end
+      # }}}
+      
+      # {{{ Placement options
+      opts.on("\n[Placement]")
 
-  (extract)
-    --extract-levels [int(s)] (default: 0) -- specify level of clade/taxonomy (written in the second column of TSV file in refpkg) to extract each clade/taxonomy placement.
-                                              (e.g., 'Eukaryota; Amoebozoa; Myxogastria' has three levels. '--extract-levels 3' means 'Myxogastria' will be extracted.)
-                                              Multiple levels can be specified with comma separeted values (e.g., '--extract-levels 2,3').
-                                               '0' means all levels in the TSV file. '-1' means extraction is not performed.
+      opts.on("--placer OPTION", ["pplacer", "apples-2", "epa-ng"], "query sequence aligner (default: pplacer) [pplacer|apples-2|epa-ng]") do |v|
+        @options[:placer] = v
+      end
 
-  (computation)
-    -c, --chunk-size [int] (default: 3000) -- chunk size of 'gappa prepare chunkify'. If the value is lower, smaller batch jobs (that can be parallelized) will be generated.
-                                              Note that it is not efective to have very low value (e.g., less than 1,000)
-    -n, --ncpus      [int] (default: 1)    -- num CPUs to use (for multicore computation, 'parallel' (GNU parallel) need to be available.)
+      # EPA-ng model option
+      opts.on("--epa-ng-model MODEL",
+        "model for epa-ng, either model name (e.g., LG, PROTGTR, ...) or tree log file (compatible with RAxML 8.x and IQ-TREE)",
+        "[required when '--placer epa-ng' is selected]",
+        "Please refer to epa-ng document. [https://github.com/pierrebarbera/epa-ng?tab=readme-ov-file#setting-the-model-parameters]") do |v|
+        @options[:epa_ng_model] = v
+      end
+      # }}}
+      
+      # {{{ Computation options
+      opts.on("\n[Computation]")
 
-[1;32m[output files][0m
-  result/<refpkg name>/{all,each}/{query,alignment,placement,assign,extract,...} -- result of placement and further analysis
-EOF
-# }}} usage
+      opts.on("-c", "--chunk-size INT", Integer, "Chunk size of 'gappa prepare chunkify' (default: 10000)") do |v|
+        @options[:chunk_size] = v
+      end
+      
+      opts.on("-n", "--ncpus INT", Integer, "Number of CPUs to use (default: 1)") do |v|
+        @options[:ncpus] = v
+      end
+      # }}}
+      
+      # {{{ General options
+      opts.on("\n[General]")
 
+      opts.on("-h", "--help", "Show this help message") do
+        puts opts
+        exit 0
+      end
+      
+      opts.on("-v", "--version", "Show version") do
+        puts VERSION
+        exit 0
+      end
+      # }}}
 
-# {{{ parse command line
-for OPT in "$@"
-do
-	case "$OPT" in
-		'-h'|'--help' )
-			echo "$usage"
-			exit 1
-			;;
-		'-v'|'--version' )
-			echo $VERSION
-			exit 1
-			;;
-		'-q'|'--query' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			query="$2"
-			shift 2
-			;;
-		'-r'|'--refpkg' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			refpkg="$2"
-			shift 2
-			;;
-		'-o'|'--outdir' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			outdir="$2"
-			shift 2
-			;;
-		'--overwrite' )
-			overwrite=true
-			shift 1
-			;;
-		'--only-detect' )
-			only_detect=true
-			shift 1
-			;;
-		'-e'|'--evalue' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			evalue="$2"
-			shift 2
-			;;
-		'--minseqlen' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			minseqlen="$2"
-			shift 2
-			;;
-		'--minhmmlen' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			minhmmlen="$2"
-			shift 2
-			;;
-		'--minhmmlenfrc' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			minhmmlenfrc="$2"
-			shift 2
-			;;
-		'--trim-option' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			trim_option="$2"
-			shift 2
-			;;
-		'--mafft-method' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			mafft_method="$2"
-			shift 2
-			;;
-		'--extract-levels' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			extract_levels="$2"
-			shift 2
-			;;
-		'-c'|'--chunk-size' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			chunk_size="$2"
-			shift 2
-			;;
-		'-n'|'--ncpus' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2; exit 1
-			fi
-			ncpus="$2"
-			shift 2
-			;;
-		'--'|'-' )
-			shift 1
-			params+=( "$@" )
-			break
-			;;
-		-*)
-			echo "$Errmsg illegal option -- '$(echo $1 | sed 's/^-*//')'" 1>&2; exit 1
-			;;
-		*)
-			if [[ ! -z "$1" ]] && [[ ! "$1" =~ ^-+ ]] ; then
-				echo "$Errmsg unparsable argument ($1)." 1>&2; echo "        Note: do not forget quotation marks to use wildcards" 1>&2; exit 1
-			fi
-			;;
-	esac
-done
+      # opts.on("--trim-option OPTION", ["merge", "largest"], "Take merged regions or largest hit (default: merge)") do |v|
+      #   @options[:trim_option] = v
+      # end
+      
+      # Extract options
+      # opts.on("--extract-levels LEVELS", "Specify level of clade/taxonomy (default: 0)") do |v|
+      #   @options[:extract_levels] = v
+      # end
+    end
+    
+    begin
+      parser.parse!
+    rescue OptionParser::InvalidOption => e
+      $stderr.puts "#{ERRMSG} #{e.message}"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    rescue OptionParser::InvalidArgument => e
+      $stderr.puts "#{ERRMSG} #{e.message}"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    # Handle remaining arguments
+    unless ARGV.empty?
+      $stderr.puts %|#{ERRMSG} unparsable argument (#{ARGV.first}).|
+      $stderr.puts %|        Note: do not forget quotation marks to use wildcards, like `-q "query_1 query_2"` or `-q 'query_*'`|
+      exit 1
+    end
+  end
+  # }}} def parse_options
+  
+  # {{{ def validate_options
+  def validate_options
+    # Check required options
+    unless @options[:query]
+      $stderr.puts "#{ERRMSG}  -q, --query <fasta file(s)> should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    unless @options[:refpkg]
+      $stderr.puts "#{ERRMSG}  -r, --refpkg <refpkg dir(s)> should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    unless @options[:outdir]
+      $stderr.puts "#{ERRMSG}  -o, --outdir should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    # Check output directory
+    if File.directory?(@options[:outdir]) && !@options[:overwrite]
+      $stderr.puts "#{ERRMSG}  -o, --outdir #{@options[:outdir]} already exists. Use --overwrite to overwrite it."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    if File.exist?(@options[:outdir]) && !File.directory?(@options[:outdir])
+      $stderr.puts "#{ERRMSG}  -o, --outdir #{@options[:outdir]} already exists and not directory (is it a file?)."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    
+    # Validate numeric options
+    if @options[:evalue] <= 0
+      $stderr.puts "#{ERRMSG}  -e, --evalue '#{@options[:evalue]}' should be positive number."
+      exit 1
+    end
 
-## default
-evalue="${evalue:-1e-5}"
-ncpus="${ncpus:-1}"
-chunk_size="${chunk_size:-3000}"
-minseqlen="${minseqlen:-0}"
-minhmmlen="${minhmmlen:-0}"
-minhmmlenfrc="${minhmmlenfrc:-0}"
-trim_option="${trim_option:-merge}"
-mafft_method="${mafft_method:-E-INS-i}"
-extract_levels="${extract_levels:-0}"
+    if @options[:evaluedom] <= 0
+      $stderr.puts "#{ERRMSG}  --evaluedom '#{@options[:evaluedom]}' should be positive number."
+      exit 1
+    end
+    
+    if @options[:chunk_size] <= 0
+      $stderr.puts "#{ERRMSG}  -c, --chunk-size '#{@options[:chunk_size]}' should be positive integer."
+      exit 1
+    end
+    
+    if @options[:ncpus] <= 0
+      $stderr.puts "#{ERRMSG}  --ncpus '#{@options[:ncpus]}' should be positive integer."
+      exit 1
+    end
+    
+    if @options[:minseqlen] < 0
+      $stderr.puts "#{ERRMSG}  --minseqlen '#{@options[:minseqlen]}' should be non-negative integer."
+      exit 1
+    end
+    
+    if @options[:minhmmlen] < 0
+      $stderr.puts "#{ERRMSG}  --minhmmlen '#{@options[:minhmmlen]}' should be non-negative integer."
+      exit 1
+    end
+    
+    # Check if outdir exists for overwrite flag
+    @outdir_exist = File.directory?(@options[:outdir]) && @options[:overwrite]
+  end
+  # }}} def validate_options
+  
+  # {{{ def check_dependencies
+  def check_dependencies
+    # Check required commands
+    commands = ["hmmsearch", "mafft", "gappa", "ruby"]
+    commands << "parallel" if @options[:ncpus] > 1
+    
+    commands.each do |cmd|
+      unless system("command -v #{cmd} >/dev/null 2>&1")
+        $stderr.puts "#{ERRMSG} #{cmd} is not available. Aborting."
+        exit 1
+      end
+    end
+    
+    # Check Ruby version
+    ruby_version = RUBY_VERSION.to_f
+    if ruby_version < 2.0
+      $stderr.puts "#{ERRMSG} ruby (version >=2.0) is required. Aborting."
+      exit 1
+    end
+  end
+  # }}} def check_dependencies
+  
+  # {{{ def setup_logging
+  def setup_logging
+    # Create log directory
+    @logdir = File.join(@options[:outdir], "log")
+    FileUtils.mkdir_p(@logdir)
+    
+    # Set up log file
+    @logfile = File.join(@logdir, "#{@stime_str}.#{@progname}.log")
+    
+    # Log the command
+    log_header = <<~EOF
+    
+    \e[1;32m===== command line\e[0m
+    
+    $ #{@incmd}
+    
+    \e[1;32m===== log file\e[0m
+    
+    #{@logfile}
+    
+    \e[1;32m===== check version of #{@progname}: #{@progpath}\e[0m
+    
+    #{VERSION}
+    
+    EOF
+    
+    File.open(@logfile, "w") { |f| f.puts log_header }
+    puts log_header
+  end
+  # }}} def setup_logging
+  
+  # {{{ def run_rake
+  def run_rake
+    rakefile = File.join(@script_dir, "#{@progname}.rake")
+    
+    # Build environment variables for Rake
+    env_vars = {
+      "outdir"         => @options[:outdir],
+      "query"          => @options[:query],
+      "refpkg"         => @options[:refpkg],
+      "outdir_exist"   => @outdir_exist ? "true" : "",
+      "evalue"         => @options[:evalue].to_s,
+      "evaluedom"      => @options[:evaluedom].to_s,
+      "minseqlen"      => @options[:minseqlen].to_s,
+      "minhmmlen"      => @options[:minhmmlen].to_s,
+      "minhmmcov"      => @options[:minhmmcov].to_s,
+      "minalilen"      => @options[:minalilen].to_s,
+      "minalicov"      => @options[:minalicov].to_s,
+      "placer"         => @options[:placer],
+      "aligner"        => @options[:aligner],
+      "mafft_method"   => @options[:mafft_method],
+      "epa_ng_model"   => @options[:epa_ng_model],
+      "extract_levels" => @options[:extract_levels],
+      "chunk_size"     => @options[:chunk_size].to_s,
+      "ncpus"          => @options[:ncpus].to_s,
+      "only_detect"    => @options[:only_detect] ? "true" : ""
+      # "trim_option"    => @options[:trim_option],
+    }
+    
+    # Set environment variables
+    env_vars.each { |k, v| ENV[k] = v }
+    
+    # Run Rake
+    begin
+      ### [do not use] system() with pipe to 'tee' does not return correct exit status of rake
+      # system("rake -f #{rakefile} 2>&1 | tee -a #{@logfile}")
+      # status = $?.exitstatus
 
-re='^[0-9]+$'
-if   [[ ! -n "$query" ]] ; then
-	echo "$Errmsg  -q, --query <fasta file(s)> should be given." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! -n "$refpkg" ]] ; then
-	echo "$Errmsg  -r, --refpkg <refpkg dir(s)> should be given." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! -n "$outdir" ]] ; then
-	echo "$Errmsg  -o, --outdir should be given." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[   -d "$outdir" && -z "$overwrite" ]] ; then
-	echo "$Errmsg  -o, --outdir $outdir already exists. Use --overwrite to overwrite it. " 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! -d "$outdir" &&  -e "$outdir" ]] ; then
-	echo "$Errmsg  -o, --outdir $outdir already exists and not directory (is it a file?). " 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! $chunk_size =~ $re ]] ; then
-	echo "$Errmsg  -c, --chunk-size '$chunk_size' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[   "$mafft_method" != "FFT-NS-2" ]] && [[ "$mafft_method" != "FFT-NS-i" ]] && [[ "$mafft_method" != "E-INS-i" ]] ; then
-	echo "$Errmsg  --mafft-method should be either FFT-NS-2 or FFT-NS-i or E-INS-i ('$mafft_method' is given)." 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! $ncpus =~ $re ]] ; then
-	echo "$Errmsg  --ncpus '$ncpus' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! $minseqlen =~ $re ]] ; then
-	echo "$Errmsg  --minseqlen '$minseqlen' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-elif [[ ! $minhmmlen =~ $re ]] ; then
-	echo "$Errmsg  --minhmmlen '$minhmmlen' is not an integer" 1>&2; echo "         execute '$PROGNAME -h' for usage" 1>&2; exit 1
-fi
+      ### [use] Open3.popen3 to capture stdout/stderr line by line
+      require 'open3'
+      status = nil
+      open(@logfile, "a") do |fw|
+        fw.sync = true
+        Open3.popen3("rake -f #{rakefile} 2>&1") do |stdin, stdout, _, wait_thr| ### use only stdout
+          stdin.close
+          stdout.each { |l|
+            fw.puts l
+            STDOUT.puts l
+            # STDOUT.flush
+          }
 
-if [[ -d "$outdir" && "$overwrite" = "true" ]] ; then
-	outdir_exist=true
-fi
+          status = wait_thr.value.exitstatus ### integer exit status
+        end
+      end
+      
+      etime     = Time.now
+      etime_str = etime.strftime("%Y-%m-%d %H:%M:%S %z")
 
-### rakefile/logdir
-pushd `dirname $0` > /dev/null
-scrdir=`pwd -P`
-popd > /dev/null
-jobname=`basename $0`
-rakefile=$scrdir/$jobname.rake
+      ### success or error
+      if status == 0
+        sfile = File.join(@logdir, "#{@stime_str}.#{@progname}.success")
+        smsg  = "#{SCCMSG} run finished: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+        File.write(sfile, smsg)
+        $stderr.puts smsg
+      else
+        efile = File.join(@logdir, "#{@stime_str}.#{@progname}.error")
+        emsg  = "#{ERRMSG} run aborted: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+        File.write(efile, emsg)
+        $stderr.puts emsg
+        exit 1
+      end
+    rescue Interrupt ### capture Ctrl-C
+      etime     = Time.now
+      etime_str = etime.strftime("%Y-%m-%d %H:%M:%S %z")
 
-logdir=$outdir/log
-mkdir -p $logdir
-startTime=$(LC_ALL=C date +"%Y-%m-%d_%H:%M:%S")
-flog=$logdir/$startTime.$jobname.log
-# }}} parse command line
+      efile = File.join(@logdir, "#{@stime_str}.#{@progname}.error")
+      emsg  = "#{ERRMSG} run interrupted: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+      File.write(efile, emsg)
+      $stderr.puts emsg
+      exit 1
+    end
+  end
+  # }}} def run_rake
+  
+  # {{{ def run
+  def run
+    parse_options
+    validate_options
+    check_dependencies
+    
+    # Show overwrite warning
+    if @outdir_exist
+      puts "\n\n\e[1;35mWarning:\e[0m output directory #{@options[:outdir]} already exists. Overwrite it.\n\n"
+      STDOUT.flush
+    end
+    
+    setup_logging
+    run_rake
+  end
+  # }}} def run
+end
+# }}} class PiPP
 
-
-# {{{ check dependencies
-command -v hmmsearch >/dev/null 2>&1 || { echo >&2 "$Errmsg hmmsearch (hmmer) is not available.  Aborting."; exit 1; }
-command -v mafft >/dev/null 2>&1 || { echo >&2 "$Errmsg mafft is not available.  Aborting."; exit 1; }
-command -v gappa >/dev/null 2>&1 || { echo >&2 "$Errmsg gappa is not available.  Aborting."; exit 1; }
-# command -v pplacer >/dev/null 2>&1 || { echo >&2 "$Errmsg pplacer is not available.  Aborting."; exit 1; }
-command -v ruby >/dev/null 2>&1 || { echo >&2 "$Errmsg ruby is not available.  Aborting."; exit 1; }
-
-### check ruby version
-ST=`ruby -e 'print RUBY_VERSION.to_f >= 2.0 ? 0 : 1'`
-if [ $ST -ne 0 ]; then 
-	echo >&2 "$Errmsg ruby (version >=2.0) is required.  Aborting."; exit 1;
-fi
-
-### check availablity of GNU parallel
-if [ "$ncpus" -gt 1 ]; then 
-	command -v parallel >/dev/null 2>&1 || { echo >&2 "$Errmsg parallel (GNU parallel) is not available.  Aborting."; exit 1; }
-fi
-# }}} check dependencies
-
-
-# {{{ after run function
-function after_run(){
-  endTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S %z")
-
-  if [[ $1 -gt 0 ]] ; then
-    echo "$Errmsg run failed: $endTime" > "$logdir/$startTime.$jobname.error"
-    echo "$Errmsg process is killed: $endTime" |tee -a "$flog"
-    exit 1
-  else
-    echo "$Sccmsg run finished: $endTime" > "$logdir/$startTime.$jobname.success"
-  fi
-}
-### }}} after run function
-
-
-# {{{ input command
-read -r -d '' incmdlog <<EOF
-
-[1;32m===== command line[0m
-
-$ $incmd
-
-[1;32m===== log file[0m
-
-$flog
-
-[1;32m===== check version: $PROGNAME[0m
-
-$VERSION
-
-EOF
-# }}} input command
-
-
-### main
-
-## write input command
-echo "$incmdlog" |tee -a $flog
-
-## trap Ctrl-C etc...
-trap 'after_run 1' 1 2 3 9 15
-
-## run
-rake -f $rakefile \
-	outdir="$outdir" query="$query" refpkg="$refpkg" outdir_exist="$outdir_exist" \
-	evalue="$evalue" minseqlen="$minseqlen" minhmmlen="$minhmmlen" minhmmlenfrc="$minhmmlenfrc" \
-	mafft_method="$mafft_method" extract_levels="$extract_levels" trim_option="$trim_option" \
-	chunk_size="$chunk_size" ncpus="$ncpus" only_detect="$only_detect" \
-	2>&1 |tee -a $flog
-st=$(( ${PIPESTATUS[0]} + ${PIPESTATUS[1]} ))
-after_run $st
-
+# Run the application
+if __FILE__ == $0
+  PiPP.new.run
+end

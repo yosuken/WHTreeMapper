@@ -1,15 +1,20 @@
 
-fori, fas, alns, ques, faall, bdir = ARGV
+STDOUT.sync = true; STDERR.sync = true
+
+fori, fas, alns, ques, adir, bdir = ARGV
 
 require 'rake'
 
 ## fori: alignment given by refpkg
-fas  = Dir[fas].sort_by{ |fa| fa.split("/")[-1].split(".")[0].gsub(/^chunk_/, "").to_i } ### fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"
-alns = Dir[alns].sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }              ### alns = "#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/mafft_add.fa"
-ques = ques.split(",")                                                                   ### ques = "#{Resdir}/#{pkg[:name]}/each/query/#{que[:name]/trimmed.fa", ordered same as input query file.
+### fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"
+fas  =  Dir[fas].sort_by{ |fa| fa.split("/")[-1].split(".")[0].gsub(/^chunk_/, "").to_i }
+### alns = "#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.fa"
+alns = Dir[alns].sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
+### ques = "#{Resdir}/filtered/#{que[:name]/seq/region/#{pkg[:name]}.fa", ordered same as input query file.
+ques = ques.split(",")
 
 hash2seq = {}
-fas.each{ |fa| ## trimmed seq, hashed
+fas.each{ |fa| ## region seq, hashed
   IO.read(fa).split(/^>/)[1..-1].each{ |ent|
     hash, *seq = ent.split("\n")
     seq = seq.join.gsub(/\s+/, "")
@@ -27,28 +32,38 @@ alns.each{ |fa| ## alingned seq, hashed
   }
 }
 
-header = "" ### alignment given by refpkg
+header = [] ### alignment given by refpkg
 IO.read(fori).split(/^>/)[1..-1].each{ |ent|
   lab, *seq = ent.split("\n")
-  header += ">" + lab + "\n" + seq.join.gsub(/\s+/, "") + "\n"
+  seq = seq.join.gsub(/\s+/, "")
+  header << ">#{lab}" << seq
 }
 
-fwa = open(faall, "w"); fwa.puts header ## all alignment
-ques.each{ |fa| ## trimmed seq, labeled
-  name = File.basename(fa).gsub(/\.fa$/, "")
+fwa0 = open("#{adir}/aligned.fa", "w")        ## all alignment with ref
+fwa1 = open("#{adir}/aligned_wo_ref.fa", "w") ## all alignment without ref
+fwa0.puts header
+
+ques.each{ |fa| ## region seq, labeled
+  # fa: #{PreFildir}/#{que[:name]}/seq/region/#{pkg[:name]}/#{que[:name]}.fa
+  name = fa.split("/")[-1].gsub(/\.fa$/, "")
   odir = "#{bdir}/#{name}"; mkdir_p odir
   
-  open("#{odir}/aligned.fa", "w"){ |fw| ## each alignment
-    fw.puts header
+  fw0 = open("#{odir}/aligned.fa", "w")        ## each alignment with ref
+  fw1 = open("#{odir}/aligned_wo_ref.fa", "w") ## each alignment without ref
+  fw0.puts header
 
-    IO.read(fa).split(/^>/)[1..-1].each{ |ent|
-      lab, *seq = ent.split("\n")
-      seq = seq.join.gsub(/\s+/, "")
-      aln = seq2aln[seq]
+  IO.read(fa).split(/^>/)[1..-1].each{ |ent|
+    lab, *seq = ent.split("\n")
+    seq = seq.join.gsub(/\s+/, "")
+    aln = seq2aln[seq]
 
-      fw.puts [">"+lab, aln]
-      fwa.puts [">"+lab, aln]
-    }
+    fw0.puts [">"+lab, aln]
+    fw1.puts [">"+lab, aln]
+    fwa0.puts [">"+lab, aln]
+    fwa1.puts [">"+lab, aln]
   }
+
+  [fw0, fw1].each{ |fw| fw.close }
 }
-fwa.close
+
+[fwa0, fwa1].each{ |fwa| fwa.close }

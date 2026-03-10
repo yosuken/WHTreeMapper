@@ -17,3 +17,9 @@
 /pbslog
 ### test output directory
 /test*
+
+### binary of witch-ng
+/bin/witch-ng
+
+/.filenum/
+/.ruby-lsp/

@@ -1,5 +1,5 @@
 
-fa, fout = ARGV
+fout, *fas = ARGV
 
 AA_Properties = { ## reference: KEGG compound, 2020-05-28
   "K" => {"N" => 1, "S" => 0, "C" => 4, "MW" => 146.1876, }, ## C00047
@@ -28,40 +28,44 @@ header = %w|gene len len_of_std_aa avg_MW N-ARSC C-ARSC S-ARSC K R H D E N Q S T
 fw = open(fout, "w")
 fw.puts header*"\t"
 
-IO.read(fa).split(/^>/)[1..-1].each{ |ent|
-  lab, *seq = ent.split("\n")
-  seq = seq.join.gsub(/\s+/, "").gsub("*", "") ### remove stop codon
-  gid = lab.split(/\s+/)[0]
+fas.each{ |fa|
+  next if !(File.exist?(fa)) or File.zero?(fa)
 
-  info  = Hash.new(0)
+  IO.read(fa).split(/^>/)[1..-1].each{ |ent|
+    lab, *seq = ent.split("\n")
+    seq = seq.join.gsub(/\s+/, "").gsub("*", "") ### remove stop codon
+    gid = lab.split(/\s+/)[0]
 
-  ## store info
-  info["len"]  = seq.size
-  info["gene"] = gid
-  count = seq.scan(/./).inject(Hash.new(0)){ |h, i| h[i] += 1; h } 
-  p count
-  p AA_Properties
+    info  = Hash.new(0)
 
-  AA_Properties.each{ |k, prop|
-    info[k]          += count[k]
-    info["len_of_std_aa"] += count[k]
-    %w|N S C|.each{ |i|
-      info["#{i}-ARSC"] += count[k] * prop[i]
+    ## store info
+    info["len"]  = seq.size
+    info["gene"] = gid
+    count = seq.scan(/./).inject(Hash.new(0)){ |h, i| h[i] += 1; h } 
+    # p count
+    # p AA_Properties
+
+    AA_Properties.each{ |k, prop|
+      info[k]          += count[k]
+      info["len_of_std_aa"] += count[k]
+      %w|N S C|.each{ |i|
+        info["#{i}-ARSC"] += count[k] * prop[i]
+      }
+      %w|MW|.each{ |i|
+        info["avg_#{i}"] += count[k] * prop[i]
+      }
     }
-    %w|MW|.each{ |i|
-      info["avg_#{i}"] += count[k] * prop[i]
+
+    ## store others (i.e., other than 20 standard AAs)
+    info["others"] = info["len"] - info["len_of_std_aa"]
+
+    ## divide by len_of_std_aa
+    %w|N-ARSC S-ARSC C-ARSC avg_MW|.each{ |i|
+      info[i] = "%.6g" % (info[i].to_f / info["len_of_std_aa"])
     }
+
+    fw.puts header.map{ |i| info[i] }*"\t"
   }
-
-  ## store others (i.e., other than 20 standard AAs)
-  info["others"] = info["len"] - info["len_of_std_aa"]
-
-  ## divide by len_of_std_aa
-  %w|N-ARSC S-ARSC C-ARSC avg_MW|.each{ |i|
-    info[i] = "%.6g" % (info[i].to_f / info["len_of_std_aa"])
-  }
-
-  fw.puts header.map{ |i| info[i] }*"\t"
 }
 
 fw.close

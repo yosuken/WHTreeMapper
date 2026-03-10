@@ -7,8 +7,8 @@ open(fout, "w"){ |fw|
       if l[0] == ">"
         fw.puts l
       else
-        ### U -> X
-        fw.puts l.gsub("U", "X")
+        ### U, O, B, Z -> X
+        fw.puts l.gsub(/[UOBZ]/, "X")
       end
     end
   }

@@ -1,4 +1,5 @@
 
+STDOUT.sync = true; STDERR.sync = true
 
 # {{{ procedures
 WriteBatch  = lambda do |t, jobdir, outs|
@@ -17,16 +18,12 @@ end
 RunBatch  = lambda do |t, jobdir, ncpu, logdir|
   jdir = "#{jobdir}/#{t.name.split(":")[-1]}"
   ldir = "#{logdir}/#{t.name.split(":")[-1]}"; mkdir_p ldir unless File.directory?(ldir)
+  tdir = "#{jdir}/tmp"; mkdir_p tdir unless File.directory?(tdir)
 
   Dir["#{jdir}/*.sh"].sort_by{ |fin| fin.split(".")[-1].to_i }.each{ |fin| ## always 1 or 0 file
-    if ncpu > 1
-      sh "parallel --jobs #{ncpu} --joblog #{ldir}/parallel.log <#{fin}"
-    else
-      # sh "bash -c #{fin}" ## --> permission denied
-      sh "bash #{fin}"
-    end
+    sh "TMPDIR=#{tdir} parallel --jobs #{ncpu} --joblog #{ldir}/parallel.log <#{fin}"
   }
-  open("#{ldir}/exit", "w"){ |fw| fw.puts "exit at #{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}" }
+  open("#{ldir}/exit", "w"){ |fw| fw.puts "exit with status 0 at #{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}" }
 end
 
 PrintStatus = lambda do |current, total, status, t|
@@ -34,14 +31,14 @@ PrintStatus = lambda do |current, total, status, t|
   puts "\e[1;32m===== #{Time.now}\e[0m"
   puts "\e[1;32m===== step #{current} / #{total} (#{t.name}) -- #{status}\e[0m"
   puts ""
-  $stdout.flush
+  # STDOUT.flush
 end
 
 CheckVersion = lambda do |commands|
   commands.each{ |command|
     str = case command
     when "ruby"
-      %|which ruby && ruby --version 2>&1|
+      %{which ruby && ruby -v 2>&1}
     when "hmmsearch"
       %{which hmmsearch && hmmsearch -h 2>&1 |head -n 2}
     when "mafft"
@@ -52,6 +49,16 @@ CheckVersion = lambda do |commands|
       %{which pplacer && pplacer --version}
     when "parallel"
       %{which parallel && LANG=C parallel --version 2>&1 |head -n 1}
+    when "witch-ng"
+      %{echo #{WITCH_NG} && #{WITCH_NG} --version 2>&1}
+    when "run_apples.py"
+      %{which run_apples.py && run_apples.py --version 2>&1 |tail -n 1}
+    when "FastTreeMP"
+      %{which FastTreeMP && FastTreeMP -expert 2>&1 |head -n 1}
+    when "FastTree"
+      %{which FastTree && FastTree -expert 2>&1 |head -n 1}
+    when "epa-ng"
+      %{which epa-ng && epa-ng -v 2>&1}
     end
     puts ""
     puts "\e[1;32m===== check version: #{command}\e[0m"
@@ -59,8 +66,7 @@ CheckVersion = lambda do |commands|
     puts "$ #{str}"
     ### run
     puts `#{str}`
-    ### flush
-    $stdout.flush
+    # STDOUT.flush
   }
 end
 # }}} procedures
@@ -68,41 +74,12 @@ end
 
 # {{{ task controller
 task :default do
-  ### define tasks
-  tasks = []
-  tasks << "01-1a-A.validate_query"
-  tasks << "01-1a-B.parse_query_info"
-  tasks << "01-1b.validate_refpkg"
-  tasks << "01-2a.hmmsearch"
-  tasks << "01-2b.parse_hmmsearch"
-  tasks << "01-2c.merge_fasta"
-  tasks << "01-3a.chunkify"
-  tasks << "01-3b.mafft_add"
-  tasks << "01-3c.pplacer"
-  tasks << "01-3d.unchunkify"
-  tasks << "01-3e.unchunkify_alignment"
-  tasks << "01-4a.info"
-  tasks << "01-4b.lwr"
-  tasks << "01-4d.assign"  ## if ftax is given
-  tasks << "01-4f.graft"
-  tasks << "01-4h.aligned_position" ## if fpos is given
-  tasks << "01-6a.aa_feature"
+  # STDOUT.sync = true ### for real-time output
 
-  # tasks << "01-4e.extract" ## if ftax is given ### memory requirement is too high for rep_2022-06-08
-  # tasks << "01-4g.heat-tree"
-  # tasks << "01-5a.krd"
-
-  ### currently not used
-  ### tasks << "01-4c.edpl"    ## high memory requirement. --> do not run
-  ### tasks << "01-5b.edgepca" ## high memory requirement if input (num of samples?) is large.
-  ### tasks << "01-5c.squash"
-  ### tasks << "01-5d.dispersion"
-
-  if ENV["only_detect"] == "true"
-    Tasks = tasks[0, 5]
-  else
-    Tasks = tasks
-  end
+  ### constants
+  Errmsg    = "\e[1;31mError:\e[0m"
+  Warmsg    = "\e[1;35mWarning:\e[0m"
+  Sccmsg    = "\e[1;32mSuccess:\e[0m"
 
   ### constants from arguments
   Odir         = ENV["outdir"]            ## output directory
@@ -111,27 +88,97 @@ task :default do
   Rpkgs        = ENV["refpkg"]            ## refpkg
   Ncpu         = ENV["ncpus"].to_i        ## num of CPUs
   Evalue       = ENV["evalue"].to_f       ## hmmsearch evalue threshold (default: 1e-5)
+  EvalueDom    = ENV["evaluedom"].to_f    ## hmmsearch domain evalue threshold (default: 1e-2)
+
   MinSeqLen    = ENV["minseqlen"].to_i    ## minimum query length
-  MinHmmLen    = ENV["minhmmlen"].to_i    ## hmmsearch minimum hit hmm length
-  MinHmmLenFrc = ENV["minhmmlenfrc"].to_f ## minimum fraction of hmmsearch hit hmm length
+  MinHmmLen    = ENV["minhmmlen"].to_i    ## hmmsearch minimum region hit length of hmm
+  MinHmmCov    = ENV["minhmmcov"].to_f    ## minimum fraction of hmmsearch minimum region hit length of hmm per domain length
+  MinAliLen    = ENV["minalilen"].to_i    ## hmmsearch minimum region hit length of ali
+  MinAliCov    = ENV["minalicov"].to_f    ## minimum fraction of hmmsearch minimum region hit length of ali per gene length
+  MinHmmLenDom = ENV["minhmmlendom"].to_i ## hmmsearch minimum domain hit length of hmm
+  MinHmmCovDom = ENV["minhmmcovdom"].to_f ## minimum fraction of hmmsearch minimum domain hit length of hmm per domain length
+  MinAliLenDom = ENV["minalilendom"].to_i ## hmmsearch minimum domain hit length of ali
+  MinAliCovDom = ENV["minalicovdom"].to_f ## minimum fraction of hmmsearch minimum domain hit length of ali per gene length
+
   C_size       = ENV["chunk_size"].to_i   ## chunk size
-  M_mafft      = ENV["mafft_method"]      ## FFT-NS-2 or FFT-NS-i or E-INS-i
+  Aligner      = ENV["aligner"]           ## witch-ng|mafft-add
+  M_mafft      = ENV["mafft_method"]      ## E-INS-i|FFT-NS-i|FFT-NS-2|FFT-NS-i_addfragments|FFT-NS-2_addfragments
+  EPA_NG_model = ENV["epa_ng_model"]      ## required if --placer epa-ng is given
   Ex_lvs       = ENV["extract_levels"]    ## clade/taxonomy level for 'gappa prepare extract' (default: 0)
-  Trim_opt     = ENV["trim_option"]       ## 'merge' (merge regions of hmmserach hits)  or 'largest' (take largest hit) (default: merge)
+  Placer       = ENV["placer"]            ## pplacer|apples-2|epa-ng
+  Z            = 1_000_000                ## hmmsearch data size for evalue calculation
+  # Trim_opt     = ENV["trim_option"]   ## 'merge' (merge regions of hmmserach hits)  or 'largest' (take largest hit) (default: merge)
+
+  ### define tasks
+  tasks = []
+  tasks << "01-1a-A.validate_query"
+  tasks << "01-1a-B.parse_query_info"
+  tasks << "01-1b-A.validate_refpkg"
+  tasks << "01-1b-B.parse_refpkg_info"
+  tasks << "01-2a.hmmsearch"
+  tasks << "01-2b.parse_hmmsearch"
+  tasks << "01-2c.split_fasta"
+  tasks << "01-2d.copy_detected"
+
+  if ENV["only_detect"] != "true"
+    tasks << "01-2e.prepare_for_placement"
+    tasks << "01-3a.chunkify"
+
+    case Aligner
+    when "witch-ng"
+      tasks << "01-3b.witch-ng"
+    when "mafft-add"
+      tasks << "01-3b.mafft-add"
+    else
+      raise("#{Errmsg} --aligner #{Aligner} is not available. Choose either 'witch-ng' or 'mafft-add'.")
+    end
+
+    case Placer
+    when "pplacer"
+      tasks << "01-3c.pplacer"
+    when "apples-2"
+      tasks << "01-3c.apples-2"
+    when "epa-ng"
+      tasks << "01-3c.epa-ng"
+    else
+      raise("#{Errmsg} --placer #{Placer} is not available. Choose either 'pplacer', 'apples-2' or 'epa-ng'.")
+    end
+
+    tasks << "01-3d.unchunkify"
+    tasks << "01-3e.unchunkify_alignment"
+    tasks << "01-4a.info"
+    tasks << "01-4b.lwr-list"
+    tasks << "01-4d.assign"  ## if ftax is given
+    tasks << "01-4f.graft"
+    tasks << "01-4h.aligned_position" ## if fpos is given
+    tasks << "01-6a.aa_feature"
+
+    # tasks << "01-4e.extract" ## if ftax is given ### memory requirement is too high for rep_2022-06-08
+    # tasks << "01-4g.heat-tree"
+    # tasks << "01-5a.krd"
+
+    ### currently not used
+    ### tasks << "01-4c.edpl"    ## high memory requirement. --> do not run
+    ### tasks << "01-5b.edgepca" ## high memory requirement if input (num of samples?) is large.
+    ### tasks << "01-5c.squash"
+    ### tasks << "01-5d.dispersion"
+  end
+
+  ### store Tasks
+  Tasks = tasks
+
+  ### check witch-ng
+  WITCH_NG = "#{__dir__}/bin/witch-ng"
 
   ### check version
   commands  = %w|hmmsearch mafft gappa pplacer ruby|
-  commands += %w|parallel| if Ncpu > 1
+  commands += %w|parallel witch-ng FastTree run_apples.py epa-ng|
   CheckVersion.call(commands)
-
-  ### constants
-  Z         = 1_000_000 # hmmsearch data size for evalue calculation
-  Errmsg    = "\e[1;31mError:\e[0m"
-  Warmsg    = "\e[1;35mWarning:\e[0m"
 
   ## dir path
   Jobdir    = "#{Odir}/batch"
-  # PrePkgdir = "#{Odir}/prefilter/refpkg"    # "#{Odir}/prefilter/refpkg/refpkg_info.tsv
+  Pkgdir    = "#{Odir}/refpkg"              # "#{Odir}/prefilter/refpkgs/refpkg_info.tsv
+  Predir    = "#{Odir}/prefilter" 
   PreQuedir = "#{Odir}/prefilter/query"     # "#{Odir}/prefilter/query/#{que[:name]}/*.fa" (use .fa extension)
   PreFildir = "#{Odir}/prefilter/hmmsearch" # "#{Odir}/prefilter/hmmsearch/#{que[:name]}/{evalues.tsv,*.domtableout}"
   Cnkdir    = "#{Odir}/chunks"              # "#{Odir}/chunks/#{pkg[:name]}/{chunk,alignment,placement}"
@@ -140,11 +187,10 @@ task :default do
 
   ## variables
   $fques    = []
-  $rpkgs    = []
+  $qnames   = {}
+  $fpkgs    = []
+  $rnames   = {}
   $ex_lvs   = []
-
-  ## validate evalue
-  raise("#{Errmsg} -e, --evalue '#{ENV["evalue"]}' should be positive number.") if Evalue <= 0
 
   ## validate extract_levels
   ex_lvs_errmsg = "#{Errmsg} --extract-levels '#{Ex_lvs}' should be either -1, 0, positive integer, or comma separeted positive integers."
@@ -163,29 +209,40 @@ task :default do
   NumStep  = Tasks.size
   Tasks.each.with_index(1){ |task, idx|
     Rake::Task[task].invoke(idx)
+    # STDOUT.flush
   }
 end
 # }}} default (run all tasks)
 
 
 # {{{ tasks
+# {{{ desc "01-1a-A.validate_query"
 desc "01-1a-A.validate_query"
 task "01-1a-A.validate_query", ["step"] do |t, args|
+  ### [!!!] should not be skipped even if already done
   PrintStatus.call(args.step, NumStep, "START", t)
   outs   = []
-  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{__dir__}/script/#{t.name}.rb"
 
   ## validate query and make a copy
-  fques = Fques.split(",").inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
-  fques.map{ |fque|
+  fques = Fques.split(/[,\s]+/).inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
+  fques = fques.map{ |fque|
     if File.zero?(fque)
       $stderr.puts "#{Warmsg} #{fque} is empty. Skip it."
       next nil
     else
       File.open(fque){ |fr|
-        if fr.gets[0] != ">"
-          $stderr.puts "#{Warmsg} #{fque} is not valid fasta format. The first character should be '>'."
-          next nil
+        if fque =~ /\.gz$/ or fque =~ /\.gzip/
+          is_fque_gz = true
+          require 'zlib'
+
+          Zlib::GzipReader.open(fque) { |fr|
+            l = fr.gets
+            raise("#{Errmsg} <query> file: #{fque} has wrong format.\nThe first line should begin '>'") if l[0] != ">"
+          }
+        else
+          l = fr.gets
+          raise("#{Errmsg} <query> file: #{fque} has wrong format.\nThe first line should begin '>'") if l[0] != ">"
         end
       } 
     end
@@ -196,28 +253,114 @@ task "01-1a-A.validate_query", ["step"] do |t, args|
   raise("#{Errmsg} no query file detected.") if fques.size == 0
 
   ### file name duplication check
-  names = {}
   fques.each{ |fque|
-    name = File.basename(fque).split(".")[0..-2]*"."
-    raise("#{Errmsg} file name #{name} is not unique.") if names[name]
-    names[name] = 1
+    name = File.basename(fque).gsub(/\.gz/, "").gsub(/\.gzip/, "").split(".")[0..-2]*"."
+    raise("#{Errmsg} file name #{name} is given twice.") if $qnames[name]
+    $qnames[name] = 1
   }
 
   mkdir_p PreQuedir
-  idx = 0
-  $fjsns = []
+  flsts  = []
   fques.each{ |fque|
     ### parse fasta and check sequence length
-    idx += 1
-    name = File.basename(fque).split(".")[0..-2]*"."
+    name = File.basename(fque).gsub(/\.gz/, "").gsub(/\.gzip/, "").split(".")[0..-2]*"."
     fa   = "#{PreQuedir}/#{name}.fa"
-    fjsn = "#{fa}.json"
+    fjsn = "#{PreQuedir}/#{name}.json"
+    flst = "#{PreQuedir}/#{name}.list"
+    # flog = "#{PreQuedir}/#{name}.fa.log"
 
-    if !File.exist?(fa) or !File.exist?(fjsn)
-      outs << "ruby #{script} #{idx} #{MinSeqLen} #{name} #{fque} #{fa} #{fjsn}"
+    if !File.exist?(fjsn)
+      outs << "ruby #{script} #{MinSeqLen} #{name} #{fque} #{fa} #{fjsn} #{flst}"
     end
 
-    $fjsns << fjsn
+    flsts  << flst
+  }
+
+  next if outs.size == 0
+
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+
+  ### [!!!] sequence ID might be duplicated between files. Check it.
+  ### [ToDo] could be separate task
+  sh "cat #{flsts*' '} |sort |uniq -d >#{Predir}/duplicated.list"
+  n_dup = IO.readlines("#{Predir}/duplicated.list").size
+
+  puts "#{Warmsg} #{n_dup} non-unique sequence IDs are found between query files. See #{Predir}/duplicated.list" if n_dup > 0
+end
+# }}}
+
+# {{{ desc "01-1a-B.parse_query_info"
+desc "01-1a-B.parse_query_info"
+task "01-1a-B.parse_query_info", ["step"] do |t, args|
+  ### [!!!] should not be skipped even if already done
+  PrintStatus.call(args.step, NumStep, "START", t)
+  require 'json'
+
+  $fques = []
+  $qnames.each_key{ |name|
+    fjsn = "#{PreQuedir}/#{name}.json"
+    sjsn = IO.readlines(fjsn)[0]
+    puts sjsn ### print info
+
+    # $fques << eval(sjsn)
+    $fques << JSON.parse(sjsn, symbolize_names: true)
+  }
+end
+# }}}
+
+# {{{ desc "01-1b-A.validate_refpkg"
+desc "01-1b-A.validate_refpkg"
+task "01-1b-A.validate_refpkg", ["step"] do |t, args|
+  ### [!!!] should not be skipped even if already done
+  PrintStatus.call(args.step, NumStep, "START", t)
+  outs   = []
+  script = "#{__dir__}/script/#{t.name}.rb"
+
+  ## valdiate refpkg (does not genrate local copy file)
+  ### [2022-06-15] sort files
+  rpkgs = Rpkgs.split(/[,\s]+/).sort_by{ |path| File.basename(path) }.inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
+  $stderr.puts ["", "", "\e[1;32m===== check refpkg (N=#{rpkgs.size}) \e[0m"]
+  raise("#{Errmsg} no refpkg directory detected.") if rpkgs.size == 0
+
+  ### refpkg name duplication check
+  $rnames = {} ### refpkg names
+  rpkgs.each{ |rpkg|
+    name = File.basename(rpkg)
+    raise("#{Errmsg} refpkg name #{name} is not unique.") if $rnames[name]
+    $rnames[name] = 1
+
+    fa    = Dir["#{rpkg}/*.fa"] + Dir["#{rpkg}/*.mfa"] + Dir["#{rpkg}/*.fasta"] + Dir["#{rpkg}/*.faa"]
+    fhmm  = Dir["#{rpkg}/*.hmm"]
+    ftre  = Dir["#{rpkg}/*.tree"] + Dir["#{rpkg}/*.nwk"] + Dir["#{rpkg}/*.newick"]
+    ftax  = Dir["#{rpkg}/taxon.tsv"] 
+    fpos  = Dir["#{rpkg}/position.tsv"]
+
+    raise("#{Errmsg} #{rpkg} is not a directory.") unless File.directory?(rpkg)
+    raise("#{Errmsg} #{rpkg} does not contain fasta file. #{rpkg}/*{.fa|.mfa|.faa|.fasta} should exist.") if fa.size == 0
+    raise("#{Errmsg} #{rpkg} contains multiple fasta files. #{rpkg}/*{.fa|.mfa|.faa|.fasta} should be only one.") if fa.size > 1
+    raise("#{Errmsg} #{rpkg} contains multiple tree files. #{rpkg}/*{.tree|.nwk|.newick} should be only one.") if ftre.size > 1
+    raise("#{Errmsg} #{rpkg} does not contain .hmm file. #{rpkg}/*.hmm should exist.") if fhmm.size == 0
+    raise("#{Errmsg} #{rpkg} contains multiple .hmm files. #{rpkg}/*.hmm should be only one.") if fhmm.size > 1
+    raise("#{Errmsg} #{fhmm[0]} contains .hmm file with multiple hmms. HMM should be only one per a file.") if IO.read(fhmm[0]).split(/\/\/\s+/).size > 1
+
+    ### [!!!] TODO: sequence (not name) in tree should be nonredundant
+    ### [!!!] TODO: sequence name in tree should be same as sequence name in alignment
+    ### [!!!] TODO: ftax format check
+    ### [!!!] TODO: fpos format check
+
+    falnO  = fa[0]
+    ftreO  = ftre[0]
+    fhmmO  = fhmm[0]
+    ftaxO  = ftax.size == 0 ? nil : ftax[0] ### optional
+    fposO  = fpos.size == 0 ? nil : fpos[0] ### optional
+
+    odir = "#{Pkgdir}/#{name}"; mkdir_p odir unless File.directory?(odir)
+    faln = "#{Pkgdir}/#{name}/backbone.mfa"
+    flog = "#{Pkgdir}/#{name}/backbone.log"
+    if !File.exist?(faln)
+      outs << "ruby #{script} #{rpkg} #{odir} #{falnO} #{ftreO} #{fhmmO} #{ftaxO} #{fposO} >#{flog} 2>&1"
+    end
   }
 
   next if outs.size == 0
@@ -225,305 +368,570 @@ task "01-1a-A.validate_query", ["step"] do |t, args|
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
-desc "01-1a-B.parse_query_info"
-task "01-1a-B.parse_query_info", ["step"] do |t, args|
-  $fques = []
-  $fjsns.each{ |fjsn|
+# }}}
+
+# {{{ desc "01-1b-B.parse_refpkg_info"
+desc "01-1b-B.parse_refpkg_info"
+task "01-1b-B.parse_refpkg_info", ["step"] do |t, args|
+  ### [!!!] should not be skipped even if already done
+  PrintStatus.call(args.step, NumStep, "START", t)
+  require 'json'
+
+  $rnames.each_key{ |name|
+    fjsn = "#{Pkgdir}/#{name}/backbone.json"
     sjsn = IO.readlines(fjsn)[0]
-    $fques << eval(sjsn)
+    puts sjsn ### print info
+
+    # $fpkgs << eval(sjsn)
+    $fpkgs << JSON.parse(sjsn, symbolize_names: true)
   }
 end
-desc "01-1b.validate_refpkg"
-task "01-1b.validate_refpkg", ["step"] do |t, args|
-  ## valdiate refpkg (do not make copy)
-  ### [2022-06-15] sort files
-  rpkgs = Rpkgs.split(",").sort_by{ |path| File.basename(path) }.inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
-  $stderr.puts ["", "", "\e[1;32m===== check refpkg (N=#{rpkgs.size}) \e[0m"]
-  raise("#{Errmsg} no refpkg directory detected.") if rpkgs.size == 0
+# }}}
 
-  idx = 0
-  names = {}
-  $rpkgs = rpkgs.inject([]){ |a, rpkg|
-    idx += 1
-    fa    = Dir["#{rpkg}/*.fa"] + Dir["#{rpkg}/*.mfa"] + Dir["#{rpkg}/*.fasta"]
-    fhmm  = Dir["#{rpkg}/*.hmm"]
-    ftax  = Dir["#{rpkg}/taxon.tsv"] ;   ftax  = ftax.size == 0 ? nil : ftax[0]
-    fpos  = Dir["#{rpkg}/position.tsv"]; fpos  = fpos.size == 0 ? nil : fpos[0]
-
-    raise("#{Errmsg} #{rpkg} is not a directory.") unless File.directory?(rpkg)
-    raise("#{Errmsg} #{rpkg} does not contain fasta file. #{rpkg}/*{.fa,.mfa,.fasta} should exist.") if fa.size == 0
-    raise("#{Errmsg} #{rpkg} contains multiple fasta files. #{rpkg}/*{.fa,.mfa,.fasta} should be only one.") if fa.size > 1
-    raise("#{Errmsg} #{rpkg} does not contain .hmm file. #{rpkg}/*.hmm should exist.") if fhmm.size == 0
-    raise("#{Errmsg} #{rpkg} contains multiple .hmm files. #{rpkg}/*.hmm should be only one.") if fhmm.size > 1
-    raise("#{Errmsg} #{fhmm[0]} contains .hmm file with multiple hmms. HMM should be only one per a file.") if IO.read(fhmm[0]).split(/\/\/\s+/).size > 1
-
-    ### perse LENG of fhmm
-    hmmlen = "0"
-    open(fhmm[0]){ |fr|
-      while l = fr.gets
-        if l =~ /^LENG\s+(\d+)/
-          hmmlen = $1
-          break
-        end
-      end
-    }
-
-    ### [!!!] TODO: sequence (not name) in tree should be nonredundant
-    ### [!!!] TODO: sequence name in tree should be same as sequence name in alignment
-    ### [!!!] TODO: ftax format check
-    ### [!!!] TODO: fpos format check
-
-    name = File.basename(rpkg)
-    raise("#{Errmsg} refpkg name #{name} is not unique.") if names[name]
-    names[name] = 1
-
-    h = { idx: idx, name: name, refpkg: rpkg, faln: fa[0], hmm: fhmm[0], ftax: ftax, fpos: fpos, hmmlen: hmmlen }
-    $stderr.puts h.inspect
-    a << h
-  }
-
-  RunBatch.call(t, Jobdir, Ncpu, Logdir)
-end
+# {{{ desc "01-2a.hmmsearch"
 desc "01-2a.hmmsearch"
 task "01-2a.hmmsearch", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs   = []
 
+  npara = [Ncpu, $fpkgs.size].min
+  ncpu  = [1, (Ncpu.to_f / npara).round].max
+
+  puts "###"
+  puts "### number of parallel for hmmsearch: #{npara}"
+  puts "### number of cpu per a hmmsearch: #{ncpu} CPUs (total: #{Ncpu})"
+  puts "###"
+
+  p $fques
   $fques.each{ |que|
     next if que[:numseq] == 0
-    odir = "#{PreFildir}/#{que[:name]}"; mkdir_p odir
-    $rpkgs.each{ |pkg|
-      db   = pkg[:hmm]
+    odir = "#{PreFildir}/#{que[:name]}/out"; mkdir_p odir
+    $fpkgs.each{ |pkg|
+      db   = pkg[:fhmm]
       fa   = que[:fasta]
       fout = "#{odir}/#{pkg[:name]}.out"
       flog = "#{odir}/#{pkg[:name]}.log"
-      outs << "hmmsearch --cpu 1 -Z #{Z} --notextw -o #{fout} #{db} #{fa} >#{flog} 2>&1"
+      outs << "hmmsearch --cpu #{ncpu} -Z #{Z} --notextw -o #{fout} #{db} #{fa} >#{flog} 2>&1"
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
-  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  RunBatch.call(t, Jobdir, npara, Logdir)
 end
+# }}}
+
+# {{{ desc "01-2b.parse_hmmsearch"
 desc "01-2b.parse_hmmsearch"
 task "01-2b.parse_hmmsearch", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs   = []
-  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 
-  pkgs    = $rpkgs.map{ |pkg| pkg[:name] }
-  hmmlens = $rpkgs.map{ |pkg| pkg[:hmmlen] }
+  script = "#{__dir__}/script/parse_hmmsearch.rb"
 
   $fques.each{ |que|
     fa    = que[:fasta]
-    idir  = "#{PreFildir}/#{que[:name]}"
+    idir  = "#{PreFildir}/#{que[:name]}/out"
     next if Dir["#{idir}/*.out"].size == 0
 
-    ## output:
-    ## "#{Resdir}/refpkg/#{pkg[:name]}/each/query/{full_length,trimmed}/#{que[:name]}.fa" 
-    ## "#{idir}/evalues.tsv" (best hit sequences for phylogenetic placement)
-    outs << "ruby #{script} #{Trim_opt} #{Evalue} #{MinHmmLen} #{MinHmmLenFrc} #{fa} #{idir} #{Resdir} #{hmmlens*","} #{pkgs*" "}"
+    ### concat hmmsearch output files
+    odir = "#{PreFildir}/#{que[:name]}/parsed"; mkdir_p odir unless File.directory?(odir)
+    fhmm = "#{odir}/hmmsearch_concat.out"
+    open(fhmm, "w"){ |fw|
+      $fpkgs.each{ |pkg|
+        f = "#{idir}/#{pkg[:name]}.out"
+        if File.exist?(f) and !File.zero?(f)
+          fw.puts IO.read(f)
+        else
+          raise("#{Errmsg} #{f} does not exist or zero-sized.")
+        end
+      }
+    }
+
+    ### [2025-09-18 use parse_hmmsearch.rb]
+    flog    = "#{odir}/parse.log"
+    option  = "-ge #{Evalue} -e #{EvalueDom} --create-evalue-table --min-hmm-len-dom #{MinHmmLenDom} --min-hmm-cov-dom #{MinHmmCovDom} --min-ali-len-dom #{MinAliLenDom} --min-ali-cov-dom #{MinAliCovDom} "
+    option += "--min-hmm-len #{MinHmmLen} --min-hmm-cov #{MinHmmCov} --min-ali-len #{MinAliLen} --min-ali-cov #{MinAliCov}"
+    outs << "ruby #{script} #{option} -i #{fhmm} -f #{fa} -o #{odir} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
-desc "01-2c.merge_fasta"
-task "01-2c.merge_fasta", ["step"] do |t, args|
+# }}}
+
+# {{{ desc "01-2c.split_fasta"
+desc "01-2c.split_fasta"
+task "01-2c.split_fasta", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-  outs   = []
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
 
-  $rpkgs.each{ |pkg|
-    odir = "#{Resdir}/refpkg/#{pkg[:name]}/all/query"; mkdir_p odir unless File.directory?(odir)
+  # {{{ def parse_fasta(fin, fout, ids)
+  def parse_fasta(fin, fout, ids)
+    open(fout, "w"){ |fw|
+      flag, ent = 0, []
+      open(fin){ |fr|
+        while l = fr.gets
+          if l[0] == ">"
+            fw.puts ent if ent != [] 
+            flag, ent = 0, []
 
-    ## merge trimmed position info
-    fas = $fques.map{ |que| Dir["#{Resdir}/refpkg/#{pkg[:name]}/each/query/trimmed/#{que[:name]}.position"] }.flatten
-    next if fas.size == 0
-    fout = "#{odir}/trimmed.position"
+            id = l.strip[1..-1].split(/\s+/)[0]
+            if ids[id]
+              flag = 1
+              ent << l.strip
+            end
+          else
+            ent << l.strip if flag == 1
+          end
+        end
+        fw.puts ent if ent != []
+      }
+    }
+  end
+  # }}}
 
-    # outs << "cat #{fas*" "} >#{fout}" ## error if command line is too long
-    open(fout, "w"){ |fw| fas.each{ |fa| fw.puts IO.read(fa) } }
+  $fques.each{ |que|
+    ### parse parse_hmmsearch.rb output
+    ftsv = "#{PreFildir}/#{que[:name]}/parsed/best-hit.tsv"
+    hmm2regs = {} ### hmm_name => regions
+    hmm2gids = {} ### hmm_name => gene_ids
+    open(ftsv){ |fr|
+      _ = fr.gets # skip header
+      #       0           1             2         3        4         5        6      7     8         9
+      # protein  length(aa)  protein_info  hmm_name  hmm_acc  hmm_desc  hmm_len  score  bias  c-Evalue
+      #       10      11      12      13      14      15      16   17           18          19
+      # i-Evalue  hmm.fm  hmm.to  ali.fm  ali.to  env.fm  env.to  acc  full-Evalue  full-score
+      #   20           21
+      # link  region_name
+      while l = fr.gets
+        a = l.strip.split("\t", -1)
+        gid, hmm, reg = a.values_at(0, 3, 21)
+        hmm2gids[hmm] ||= {}
+        hmm2gids[hmm][gid] = 1
+        hmm2regs[hmm] ||= {}
+        hmm2regs[hmm][reg] = 1
+      end
+    }
 
-    ## merge fasta
-    %w|full_length trimmed|.each{ |type|
-      fas = $fques.map{ |que| Dir["#{Resdir}/refpkg/#{pkg[:name]}/each/query/#{type}/#{que[:name]}.fa"] }.flatten
-      next if fas.size == 0
-      ## output:
-      ## "#{Resdir}/refpkg/#{pkg[:name]}/each/all/{full_length,trimmed}.fa" 
+    $fpkgs.each{ |pkg|
+      regs = hmm2regs[pkg[:hmmname]]
+      gids = hmm2gids[pkg[:hmmname]]
+      next if !regs or regs.keys.size == 0
+
+      %w|whole region|.zip(%w|best-hit.whole.fa best-hit.fa|, [gids, regs]){ |type, fname, ids|
+        fin  = "#{PreFildir}/#{que[:name]}/parsed/#{fname}"
+        odir = "#{PreFildir}/#{que[:name]}/seq/#{type}/#{pkg[:name]}"; mkdir_p odir unless File.directory?(odir)
+        fout = "#{odir}/#{que[:name]}.fa"
+
+        parse_fasta(fin, fout, ids)
+        # p [fin, fout, ids.size]
+      }
+    }
+  }
+end
+# }}}
+
+# {{{ desc "01-2d.copy_detected"
+desc "01-2d.copy_detected"
+task "01-2d.copy_detected", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+
+  $fpkgs.each{ |pkg|
+    %w|whole region|.each{ |type|
+      ### for each
+      fins = []
+      $fques.each{ |que|
+        fin  = "#{PreFildir}/#{que[:name]}/seq/#{type}/#{pkg[:name]}/#{que[:name]}.fa"
+        next unless File.exist?(fin)
+
+        odir = "#{Resdir}/#{pkg[:name]}/each/seq/#{type}"; mkdir_p odir unless File.directory?(odir)
+        fout = "#{odir}/#{que[:name]}.fa"
+
+        outs << "cp #{fin} #{fout}"
+        fins << fin
+      }
+
+      ### for all
+      next if fins.size == 0
+      odir = "#{Resdir}/#{pkg[:name]}/all/seq"; mkdir_p odir unless File.directory?(odir)
       fout = "#{odir}/#{type}.fa"
-
-      # outs << "cat #{fas*" "} >#{fout}" ## error if command line is too long
-      open(fout, "w"){ |fw| fas.each{ |fa| fw.puts IO.read(fa) } }
+      outs << "cat #{fins*' '} >#{fout}"
     }
   }
 
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-2e.prepare_for_placement"
+desc "01-2e.prepare_for_placement"
+task "01-2e.prepare_for_placement", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+
+  ### assign Npara and NcpuP by counting number of refpkgs with queries identified.
+  npkg = 0
+  $fpkgs.each{ |pkg|
+    fas = "#{PreFildir}/*/seq/region/#{pkg[:name]}/*.fa" ### * --> que[:name]
+    next if Dir[fas].size == 0
+    npkg += 1
+  }
+
+  Npara = [Ncpu, npkg].min
+
+  ### number of cpu per a refpkg
+  NcpuP = [1, (Ncpu.to_f / npkg).round].max
+
+  puts "###"
+  puts "### number of parallel for placement: #{npkg}"
+  puts "### number of cpu per a placement: #{NcpuP} CPUs (total: #{Ncpu})"
+  puts "###"
+end
+# }}}
+
+# {{{ desc "01-3a.chunkify"
 desc "01-3a.chunkify"
 task "01-3a.chunkify", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+
   outs = []
   cmd  = "gappa prepare chunkify --threads 1 --allow-file-overwriting"
 
-  $rpkgs.each{ |pkg|
-    # fas = "#{Resdir}/refpkg/#{pkg[:name]}/each/query/*/*.fa" ## hmmsearch alinged region
-    fas = "#{Resdir}/refpkg/#{pkg[:name]}/each/query/trimmed/*.fa" ## hmmsearch alinged region
+  $fpkgs.each{ |pkg|
+    fas = "#{PreFildir}/*/seq/region/#{pkg[:name]}/*.fa" ### * --> que[:name]
     next if Dir[fas].size == 0
 
+    ### prepare input fasta file (cat all query files)
     odir = "#{Cnkdir}/#{pkg[:name]}/chunk"; mkdir_p odir
     flog = "#{odir}/chunkify.log"
     outs << "#{cmd} --chunk-size #{C_size} --chunks-out-dir #{odir} --abundances-out-dir #{odir} --fasta-path #{fas} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
-desc "01-3b.mafft_add"
-task "01-3b.mafft_add", ["step"] do |t, args|
+# }}}
+
+# {{{ desc "01-3b.witch-ng"
+desc "01-3b.witch-ng"
+task "01-3b.witch-ng", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
 
-  script = "#{File.dirname(__FILE__)}/script/U2X.rb" ## "U" --> "X" in aligned fasta
+  HmmSizeLb = 100 ### default: 10 (it may take long time.)
 
-  $rpkgs.each{ |pkg|
+  script0 = "#{__dir__}/script/extract_ori_reg.rb" ## extract region of the input alignment, since witch-ng output is sometimes longer than input
+  script1 = "#{__dir__}/script/UO2X.rb" ## "U" --> "X" in aligned fasta
+  script2 = "#{__dir__}/script/only_query.rb" ## "U" --> "X" in aligned fasta
+
+  $fpkgs.each{ |pkg|
     fas = Dir["#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"].sort_by{ |i| File.basename(i).gsub(/^chunk_/, "").gsub(/\.fasta$/, "").to_i }
     next if fas.size == 0
 
     ### [!!!] faln should be nonredundant (sequences are same as tree) --> TODO: validation process
-    faln = pkg[:faln]
 
     fas.each{ |fa|
       chnk  = File.basename(fa).gsub(/\.fasta$/, "") ## chunk_0, chunk_1, ...
       odir  = "#{Cnkdir}/#{pkg[:name]}/alignment/#{chnk}"; mkdir_p odir
-      flog  = "#{odir}/mafft_add.log"
-      fout  = "#{odir}/mafft_add.fa"
-      ftmp  = "#{odir}/mafft_add.U2X.fa" ## used only by pplacer ('U' --> 'X')
+      flog  = "#{odir}/witch-ng.log"
+      ftmp0 = "#{odir}/witch-ng.orig.fa" ## original output (sometimes longer than input)
+      fout  = "#{odir}/witch-ng.fa"
+      ftmp1 = "#{odir}/witch-ng.UO2X.fa" ## used only by pplacer ('U' --> 'X')
+      ftmp2 = "#{odir}/witch-ng.UO2X.only_query.fa"
 
-      add   = "--add" ## --add or --addfragments
+      # witch-ng add --threads 4 -i queries.fa -b backbone.afa -t backbone.tre -o extended_alignment.afa
+      out   = []
+      out  << "RUST_BACKTRACE=full #{WITCH_NG} add --threads #{NcpuP} --hmm-size-lb #{HmmSizeLb} -i #{fa} -b #{pkg[:faln]} -t #{pkg[:ftre]} -o #{ftmp0} >#{flog} 2>&1" ## compatible with "U"
+      out  << "ruby #{script0} #{pkg[:faln]} #{ftmp0} #{fout}" ### extract region of the input alignment, since witch-ng output is sometimes longer than input
+      out  << "ruby #{script1} #{fout} #{ftmp1}"
+      out  << "ruby #{script2} #{pkg[:faln]} #{ftmp1} #{ftmp2}"
+      outs << out*" && "
+    }
+  }
 
-      ## [!!!] --maxiterate > 0 is not compatible with --keeplength
-      if M_mafft == "FFT-NS-2" 
-        option = "--retree 2"  ## fast and rough
-        add    = "--addfragments"
-      elsif M_mafft == "FFT-NS-i" 
-        option = "--maxiterate 2"  ## fast and rough
-        add    = "--addfragments"
-      elsif M_mafft == "E-INS-i"
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Npara, Logdir)
+end
+# }}}
+
+# {{{ desc "01-3b.mafft-add"
+desc "01-3b.mafft-add"
+task "01-3b.mafft-add", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+
+  script1 = "#{__dir__}/script/UO2X.rb" ## "U" --> "X" in aligned fasta
+  script2 = "#{__dir__}/script/only_query.rb" ## "U" --> "X" in aligned fasta
+
+  $fpkgs.each{ |pkg|
+    fas = Dir["#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"].sort_by{ |i| File.basename(i).gsub(/^chunk_/, "").gsub(/\.fasta$/, "").to_i }
+    next if fas.size == 0
+
+    ### [!!!] faln should be nonredundant (sequences are same as tree) --> TODO: validation process
+
+    ### make clean header for faln
+    faln = "#{Cnkdir}/#{pkg[:name]}/backbone.mfa"
+    open(faln, "w"){ |fw|
+      IO.read(pkg[:faln]).split(/^>/)[1..-1].each{ |ent|
+        lab, *seq = ent.split("\n")
+        gid = lab.split(" ")[0]
+        fw.puts ">#{gid}\n#{seq*""}"
+      }
+    }
+
+    fas.each{ |fa|
+      chnk  = File.basename(fa).gsub(/\.fasta$/, "") ## chunk_0, chunk_1, ...
+      odir  = "#{Cnkdir}/#{pkg[:name]}/alignment/#{chnk}"; mkdir_p odir
+      flog  = "#{odir}/mafft-add.log"
+      fout  = "#{odir}/mafft-add.fa"
+      ftmp1 = "#{odir}/mafft-add.UO2X.fa" ## used only by pplacer ('U' --> 'X')
+      ftmp2 = "#{odir}/witch-ng.UO2X.only_query.fa"
+
+      ## [!!!] --maxiterate > 2 is not compatible with --keeplength
+      if M_mafft == "E-INS-i"
         option = "--genafpair" ## slow and accurate
         add    = "--add"
+      elsif M_mafft == "FFT-NS-i" 
+        option = "--maxiterate 2"  ## faster
+        add    = "--add"
+      elsif M_mafft == "FFT-NS-2" 
+        option = "--retree 2"  ## fastest
+        add    = "--add"
+      elsif M_mafft == "FFT-NS-i_addfragments" 
+        option = "--maxiterate 2"  ## faster
+        add    = "--addfragments"
+      elsif M_mafft == "FFT-NS-2_addfragments" 
+        option = "--retree 2"  ## fastest
+        add    = "--addfragments"
       else
         raise("#{Errmsg} --mafft-method #{M_mafft} is not available.")
       end
 
       out   = []
-      out  << "mafft #{option} --anysymbol --thread 1 #{add} #{fa} --keeplength #{faln} >#{fout} 2>#{flog}" ## compatible with "U"
-      out  << "ruby #{script} #{fout} #{ftmp}"
+      out  << "mafft #{option} --anysymbol --thread #{NcpuP} #{add} #{fa} --keeplength #{faln} >#{fout} 2>#{flog}" ## compatible with "U"
+      out  << "ruby #{script1} #{fout} #{ftmp1}"
+      out  << "ruby #{script2} #{pkg[:faln]} #{ftmp1} #{ftmp2}"
       outs << out*" && "
 
       ## [?] it could be automatic selection if option == ""
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
-  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  RunBatch.call(t, Jobdir, Npara, Logdir)
 end
+# }}}
+
+# {{{ desc "01-3c.pplacer"
 desc "01-3c.pplacer"
 task "01-3c.pplacer", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
 
-  $rpkgs.each{ |pkg|
-    fas = Dir["#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/mafft_add.U2X.fa"].sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
+  $fpkgs.each{ |pkg|
+    ### Aligner: mafft-add or witch-ng
+    fas = Dir["#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.UO2X.fa"] ### ref and query fasta
+    fas = fas.sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
+
+    is_valid_pkg_given = true ### false if (1) CONTENTS.json does not exist, or (2) pplacer with IQ-TREE tree is given
 
     fas.each{ |fa|
+      ### mafft-add.UO2X.fa or witch-ng.UO2X.fa
       chnk  = fa.split("/")[-2]
-      fpkg  = pkg[:refpkg] ### [!!!] should be nonredundant (sequences are same as tree)
+      fcont = "#{pkg[:refpkg]}/CONTENTS.json"
+
+      if File.exist?(fcont)
+        # parse a line like below
+        # "phylo_model": "phylo_modelxmpfgc8r.json",
+        require 'json'
+        h = JSON.parse(IO.read(fcont))
+        raise("#{Errmsg} #{fcont} does not contain phylo_model info.") unless h["files"] and h["files"]["phylo_model"]
+        fphylo = "#{pkg[:refpkg]}/#{h["files"]["phylo_model"]}"
+
+        # parse a line like below
+        # "program": "IQ-TREE 2.2.2.6",
+        h = JSON.parse(IO.read(fphylo))
+        raise("#{Errmsg} #{fphylo} does not contain program info.") unless h["program"]
+        prog = h["program"].split(" ")[0]
+
+        if prog == "IQ-TREE"
+          is_valid_pkg_given = false
+          puts "#{Warmsg} pplacer with IQ-TREE tree is not supported. Run pplacer alternatively with FastTree gamma distance tree for #{pkg[:name]}."
+        end
+      else
+        is_valid_pkg_given = false
+        puts "#{Warmsg} #{fcont} does not exist. Run pplacer with FastTree gamma distance tree for #{pkg[:name]}."
+      end
+
       odir  = "#{Cnkdir}/#{pkg[:name]}/placement/#{chnk}"; mkdir_p odir
       flog  = "#{odir}/pplacer.log"
 
-      outs << "pplacer -j 1 --out-dir #{odir} -c #{fpkg} #{fa} >#{flog} 2>&1"
+      if is_valid_pkg_given
+        outs << "pplacer --verbosity 2 -j #{NcpuP} --out-dir #{odir} -c #{pkg[:refpkg]} #{fa} >#{flog} 2>&1"
+      else
+        outs << "pplacer --verbosity 2 -j #{NcpuP} --out-dir #{odir} -c #{pkg[:ppdir]} #{fa} >#{flog} 2>&1"
+      end
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
-  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+  RunBatch.call(t, Jobdir, Npara, Logdir)
 end
+# }}}
+
+# {{{ desc "01-3c.apples-2"
+desc "01-3c.apples-2"
+task "01-3c.apples-2", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+
+  $fpkgs.each{ |pkg|
+    ### Aligner: mafft-add or witch-ng
+    fas = Dir["#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.UO2X.fa"] ### ref and query fasta
+    fas = fas.sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
+
+    fas.each{ |fa|
+      ### mafft-add.UO2X.fa or witch-ng.UO2X.fa
+      chnk  = fa.split("/")[-2]
+      odir  = "#{Cnkdir}/#{pkg[:name]}/placement/#{chnk}"; mkdir_p odir
+      flog  = "#{odir}/apples-2.log"
+      fout  = "#{odir}/#{File.basename(fa).gsub(/\.fa$/, "")}.jplace"
+
+      outs << "run_apples.py -T #{NcpuP} -o #{fout} -s #{pkg[:faln]} -t #{pkg[:ftreME]} -x #{fa} >#{flog} 2>&1"
+    }
+  }
+
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Npara, Logdir)
+end
+# }}}
+
+# {{{ desc "01-3c.epa-ng"
+desc "01-3c.epa-ng"
+task "01-3c.epa-ng", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+
+  $fpkgs.each{ |pkg|
+    ### Aligner: mafft-add or witch-ng
+    fas = Dir["#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.UO2X.only_query.fa"]  ### only query fasta
+    fas = fas.sort_by{ |fa| fa.split("/")[-2].gsub(/^chunk_/, "").to_i }
+
+    fas.each{ |fa|
+      ### mafft-add.UO2X.fa or witch-ng.UO2X.fa
+      chnk  = fa.split("/")[-2]
+      fpkg  = pkg[:refpkg] ### [!!!] should be nonredundant (sequences are same as tree)
+      odir  = "#{Cnkdir}/#{pkg[:name]}/placement/#{chnk}"; mkdir_p odir
+      flog  = "#{odir}/epa-ng.log"
+      _fout = "#{odir}/epa_result.jplace"
+      fout  = "#{odir}/#{Aligner}.UO2X.jplace"
+
+      # epa-ng --ref-msa $REF_MSA --tree $TREE --query $QRY_MSA --model $MODEL
+      # EPA_NG_model = "LG" 
+      # EPA_NG_model = "PROTGTR" 
+      outs << "epa-ng -T #{NcpuP} -m #{EPA_NG_model} -w #{odir} -s #{pkg[:faln]} -t #{pkg[:ftre]} -q #{fa} >#{flog} 2>&1 && mv #{_fout} #{fout}"
+    }
+  }
+
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Npara, Logdir)
+end
+# }}}
+
+# {{{ desc "01-3d.unchunkify"
 desc "01-3d.unchunkify"
 task "01-3d.unchunkify", ["step"] do |t, args|
   ### [!!!] [2020-11-17] Use of parallel cause "core dump". DO NOT USE parallel
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
-  cmd  = "gappa prepare unchunkify --threads 1 --allow-file-overwriting"
+  cmd1 = "gappa prepare unchunkify --threads 1 --allow-file-overwriting"
+  cmd2 = "gappa edit merge --threads 1 --allow-file-overwriting"
 
-  script = "#{File.dirname(__FILE__)}/script/merge_jplace.rb"
+  script = "#{__dir__}/script/merge_jplace.rb"
 
-  $rpkgs.each{ |pkg|
-    fplcs = "#{Cnkdir}/#{pkg[:name]}/placement/chunk_*/*.jplace" ## mafft_add.jplace
+  $fpkgs.each{ |pkg|
+    fplcs = "#{Cnkdir}/#{pkg[:name]}/placement/chunk_*/*.jplace" ## mafft-add.jplace
     next if Dir[fplcs].size == 0
 
     fabus = "#{Cnkdir}/#{pkg[:name]}/chunk/abundances_*.json"
-    odir  = "#{Resdir}/refpkg/#{pkg[:name]}/each/placement"; mkdir_p odir ## #{Resdir}/refpkg/#{pkg[:name]}/each/placement/*.jplace
+    odir  = "#{Resdir}/#{pkg[:name]}/each/placement"; mkdir_p odir ## #{Resdir}/refpkg/#{pkg[:name]}/each/placement/*.jplace
     flog  = "#{odir}/unchunkify.log"
 
     out   = []
-    out  << "#{cmd} --out-dir #{odir} --abundances-path #{fabus} --jplace-path #{fplcs} >#{flog} 2>&1"
+    out  << "#{cmd1} --out-dir #{odir} --abundances-path #{fabus} --jplace-path #{fplcs} >#{flog} 2>&1"
 
     ### merge the all jplace file
-    odir  = "#{Resdir}/refpkg/#{pkg[:name]}/all/placement"; mkdir_p odir
+    odir  = "#{Resdir}/#{pkg[:name]}/all/placement"; mkdir_p odir
     fall  = "#{odir}/all.jplace"
+    # flog  = "#{odir}/merge.log"
+    # out << "#{cmd2} --out-dir #{odir} --file-prefix all --jplace-path #{Resdir}/#{pkg[:name]}/each/placement/*.jplace >#{flog} 2>&1"
 
-    out  << "ruby #{script} #{Resdir}/refpkg/#{pkg[:name]}/each/placement/*.jplace >#{fall}"
+    ### [2025-09-27]
+    ### ruby script (merge_jplace.rb) raised error like below
+    ### /lustre/aptmp/yosuke/usr/micromamba/envs/PiPP_v0.2.0/lib/ruby/3.4.0/json/common.rb:221:in 'JSON::Ext::Parser.parse': unexpected token at '-nan, 0.00655935 ], (JSON::ParserError)
+    out  << "ruby #{script} #{Resdir}/#{pkg[:name]}/each/placement/*.jplace >#{fall}"
+
+
     outs << out*" && "
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
-  WriteBatch.call(t, Jobdir, outs)
-
-  ### [!!!] [2020-11-17] DO NOT USE PARALLEL
-  # RunBatch.call(t, Jobdir, Ncpu, Logdir)
-  RunBatch.call(t, Jobdir, 1, Logdir)
-end
-desc "01-3e.unchunkify_alignment"
-task "01-3e.unchunkify_alignment", ["step"] do |t, args|
-  PrintStatus.call(args.step, NumStep, "START", t)
-  outs = []
-
-  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
-
-  $rpkgs.each{ |pkg|
-    fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta" ## trimmed seq, hashed 
-    alns = "#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/mafft_add.fa" ## aligned seq, hashed
-    ques = $fques.map{ |que| Dir["#{Resdir}/refpkg/#{pkg[:name]}/each/query/trimmed/#{que[:name]}.fa"] }.flatten ## trimmed seq, labeled 
-    next if ques.size == 0
-
-    ### write unchunked alignment in #{Resdir}/refpkg/#{pkg[:name]}/all/alignment/aligned.fa
-    odir  = "#{Resdir}/refpkg/#{pkg[:name]}/all/alignment"; mkdir_p odir unless File.directory?(odir)
-    faall = "#{odir}/aligned.fa"
-
-    ### write unchunked alignment in #{Resdir}/refpkg/#{pkg[:name]}/each/alignment/#{que[:name]}/aligned.fa
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}/each/alignment"; mkdir_p bdir
-
-    outs << "ruby #{script} #{pkg[:faln]} '#{fas}' '#{alns}' '#{ques*","}' #{faall} #{bdir}"
-  }
-
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}} 
+
+# {{{ desc "01-3e.unchunkify_alignment"
+desc "01-3e.unchunkify_alignment"
+task "01-3e.unchunkify_alignment", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+
+  script = "#{__dir__}/script/#{t.name}.rb"
+
+  $fpkgs.each{ |pkg|
+    fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta" ## region seq, hashed 
+    alns = "#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.fa" ## aligned seq, hashed
+
+    ques = $fques.map{ |que| Dir["#{PreFildir}/#{que[:name]}/seq/region/#{pkg[:name]}/#{que[:name]}.fa"] }.flatten ## seq_region, labeled 
+
+    next if ques.size == 0
+
+    ### write unchunked alignment in #{Resdir}/#{pkg[:name]}/all/alignment/aligned.fa
+    adir = "#{Resdir}/#{pkg[:name]}/all/alignment"; mkdir_p adir unless File.directory?(adir)
+
+    ### write unchunked alignment in #{Resdir}/#{pkg[:name]}/each/alignment/#{que[:name]}/aligned.fa
+    bdir = "#{Resdir}/#{pkg[:name]}/each/alignment"; mkdir_p bdir unless File.directory?(bdir)
+
+    outs << "ruby #{script} #{pkg[:faln]} '#{fas}' '#{alns}' '#{ques*","}' #{adir} #{bdir}"
+  }
+
+  WriteBatch.call(t, Jobdir, outs)
+  RunBatch.call(t, Jobdir, Ncpu, Logdir)
+end
+# }}}
+
+# {{{ desc "01-4a.info"
 desc "01-4a.info"
 task "01-4a.info", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa examine info --threads 1 --allow-file-overwriting"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all (merged) query files
     fplcs = "#{bdir}/all/placement/all.jplace" ## "#{que[:name]}.jplace"
@@ -544,18 +952,21 @@ task "01-4a.info", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
-desc "01-4b.lwr"
-task "01-4b.lwr", ["step"] do |t, args|
-  PrintStatus.call(args.step, NumStep, "START", t)
-  outs = []
-  cmd  = "gappa examine lwr --threads 1 --allow-file-overwriting"
+# }}}
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+# {{{ desc "01-4b.lwr-list"
+desc "01-4b.lwr-list"
+task "01-4b.lwr-list", ["step"] do |t, args|
+  PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+  outs = []
+  cmd  = "gappa examine lwr-list --threads 1 --allow-file-overwriting"
+
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all (merged) query files
     fplcs = "#{bdir}/all/placement/all.jplace"
@@ -563,8 +974,8 @@ task "01-4b.lwr", ["step"] do |t, args|
     next if Dir[fplcs].size == 0
 
     odir  = "#{bdir}/all/placement"; mkdir_p odir
-    flog  = "#{odir}/all.lwr.log"
-    pref  = "all.lwr_"
+    flog  = "#{odir}/all.lwr-list.log"
+    pref  = "all."
     outs << "#{cmd} --out-dir #{odir} --file-prefix #{pref} --jplace-path #{fplcs} >#{flog} 2>&1"
 
     ### each query file
@@ -573,19 +984,22 @@ task "01-4b.lwr", ["step"] do |t, args|
       next unless File.exist?(fplcs)
 
       odir  = "#{bdir}/each/placement"
-      flog  = "#{odir}/#{que[:name]}.lwr.log"
-      pref  = "#{que[:name]}.lwr_"
+      flog  = "#{odir}/#{que[:name]}.lwr-list.log"
+      pref  = "#{que[:name]}."
       outs << "#{cmd} --out-dir #{odir} --file-prefix #{pref} --jplace-path #{fplcs} >#{flog} 2>&1"
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4c.edpl"
 desc "01-4c.edpl"
 task "01-4c.edpl", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa examine edpl --no-list-file --threads 1 --allow-file-overwriting"
   ### [!!!] --no-list-file: need to limit memory usage.
@@ -595,8 +1009,8 @@ task "01-4c.edpl", ["step"] do |t, args|
   $stderr.puts "Currently, do not execute 'gappa examine edpl' due to high memory requirement."
   next ## SKIP THIS TASK !!!
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/all/placement/all.jplace"
@@ -620,20 +1034,23 @@ task "01-4c.edpl", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4d.assign"
 desc "01-4d.assign"
 task "01-4d.assign", ["step"] do |t, args|
-  ### option might be changed between v0.6.0 and v0.7.1
   PrintStatus.call(args.step, NumStep, "START", t)
+  # (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+
   outs = []
   # cmd  = "gappa examine assign --threads 1 --per-query-results --krona --allow-file-overwriting" ### for v0.7.1
   cmd  = "gappa examine assign --threads 1 --krona --allow-file-overwriting" ### for v0.6.0
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
     ftax = pkg[:ftax]
 
     ($stderr.puts "For #{pkg}, taxon.tsv is not found. Skip the taxonomy/clade assignment step."; next) unless ftax
@@ -645,7 +1062,8 @@ task "01-4d.assign", ["step"] do |t, args|
 
     odir  = "#{bdir}/all/assign"; mkdir_p odir
     flog  = "#{odir}/assign.log"
-    outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} --taxon-file #{ftax} >#{flog} 2>&1"
+    fpque = "#{odir}/per_query.tsv" ### --per-query-results output
+    outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} --taxon-file #{ftax} --per-query-results >#{flog} 2>&1"
 
     ### each query file
     $fques.each{ |que|
@@ -654,24 +1072,29 @@ task "01-4d.assign", ["step"] do |t, args|
 
       odir  = "#{bdir}/each/assign/#{que[:name]}"; mkdir_p odir
       flog  = "#{odir}/assign.log"
-      outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} --taxon-file #{ftax} >#{flog} 2>&1"
+      fpque = "#{odir}/per_query.tsv"
+      outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} --taxon-file #{ftax} --per-query-results >#{flog} 2>&1"
     }
   }
 
-  # next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4e.extract"
 desc "01-4e.extract"
 task "01-4e.extract", ["step"] do |t, args|
   next if $ex_lvs == [-1] ### do not extract
 
   PrintStatus.call(args.step, NumStep, "START", t)
+  # (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
+
   outs = []
   cmd  = "gappa prepare extract --threads 1 --allow-file-overwriting"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
     ftax = pkg[:ftax]
 
     ($stderr.puts "For #{pkg}, taxon.tsv is not found. Skip the taxonomy/clade assignment step."; next) unless ftax
@@ -716,18 +1139,21 @@ task "01-4e.extract", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4f.graft"
 desc "01-4f.graft"
 task "01-4f.graft", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa examine graft --threads 1 --fully-resolve --name-prefix Q_ --allow-file-overwriting"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/all/placement/all.jplace"
@@ -749,23 +1175,25 @@ task "01-4f.graft", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4g.heat-tree"
 desc "01-4g.heat-tree"
 task "01-4g.heat-tree", ["step"] do |t, args|
-  ### option might be changed between v0.6.0 and v0.7.1
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   opt_svg = "--svg-tree-shape circular --color-list viridis --reverse-color-list --svg-tree-stroke-width 3 --svg-tree-ladderize"
   prefix  = "tree"
   cmd  = "gappa examine heat-tree --threads 1 #{opt_svg} --tree-file-prefix #{prefix} --write-newick-tree --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
 
-  script = "#{File.dirname(__FILE__)}/script/nexus2itol.rb"
+  script = "#{__dir__}/script/nexus2itol.rb"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/all/placement/all.jplace"
@@ -787,19 +1215,22 @@ task "01-4g.heat-tree", ["step"] do |t, args|
     }
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-4h.aligned_position"
 desc "01-4h.aligned_position"
 task "01-4h.aligned_position", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  # (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
 
-  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{__dir__}/script/#{t.name}.rb"
 
-  $rpkgs.each{ |pkg|
-    bdir    = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir    = "#{Resdir}/#{pkg[:name]}"
     fpos    = pkg[:fpos]
     frefaln = pkg[:faln]
 
@@ -829,18 +1260,21 @@ task "01-4h.aligned_position", ["step"] do |t, args|
     }
   }
 
-  # next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-5a.krd"
 desc "01-5a.krd"
 task "01-5a.krd", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa analyze krd --threads 1 --allow-file-overwriting"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/each/placement/*.jplace" ## "#{que[:name]}.jplace"
@@ -851,19 +1285,22 @@ task "01-5a.krd", ["step"] do |t, args|
     outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-5b.edgepca"
 desc "01-5b.edgepca"
 task "01-5b.edgepca", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa analyze edgepca --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/each/placement/*.jplace" ## "#{que[:name]}.jplace"
@@ -874,20 +1311,23 @@ task "01-5b.edgepca", ["step"] do |t, args|
     outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-5c.squash"
 desc "01-5c.squash"
 task "01-5c.squash", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa analyze squash --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
   ## [!!!] this task will generate (2n - 2) * 3 tree files where n is num of input query fasta files.
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/each/placement/*.jplace" ## "#{que[:name]}.jplace"
@@ -898,19 +1338,22 @@ task "01-5c.squash", ["step"] do |t, args|
     outs << "#{cmd} --out-dir #{odir} --jplace-path #{fplcs} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-5d.dispersion"
 desc "01-5d.dispersion"
 task "01-5d.dispersion", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
   cmd  = "gappa analyze dispersion --threads 1 --write-nexus-tree --write-phyloxml-tree --write-svg-tree --allow-file-overwriting"
   ## newick tree is same as tree in refpkg (no color information) --> do not use --write-newick-tree
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
 
     ### all query files
     fplcs = "#{bdir}/each/placement/*.jplace" ## "#{que[:name]}.jplace"
@@ -921,43 +1364,59 @@ task "01-5d.dispersion", ["step"] do |t, args|
     outs << "#{cmd} --out-dir #{odir} --mass-norm absolute --jplace-path #{fplcs} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
+
+# {{{ desc "01-6a.aa_feature"
 desc "01-6a.aa_feature"
 task "01-6a.aa_feature", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
+  (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit") ### skip if already done
   outs = []
 
-  script = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+  script = "#{__dir__}/script/#{t.name}.rb"
 
-  $rpkgs.each{ |pkg|
-    bdir = "#{Resdir}/refpkg/#{pkg[:name]}"
-
-    ### all query files
-    fa    = "#{bdir}/all/query/trimmed.fa"
-    next unless File.exist?(fa)
-
-    odir  = "#{bdir}/all/feature/aa"; mkdir_p odir
-    fout  = "#{odir}/aa_feature.tsv"
-    flog  = "#{odir}/aa_feature.log"
-    outs << "ruby #{script} #{fa} #{fout} >#{flog} 2>&1"
+  $fpkgs.each{ |pkg|
+    bdir = "#{Resdir}/#{pkg[:name]}"
+    fas  = []
 
     ### each query file
     $fques.each{ |que|
-      fa    = "#{bdir}/each/query/trimmed/#{que[:name]}.fa"
+      fa = "#{PreFildir}/#{que[:name]}/seq/region/#{pkg[:name]}/#{que[:name]}.fa"
       next unless File.exist?(fa)
 
       odir  = "#{bdir}/each/feature/aa"; mkdir_p odir unless File.directory?(odir)
-      fout  = "#{odir}/aa_feature.tsv"
-      flog  = "#{odir}/aa_feature.log"
-      outs << "ruby #{script} #{fa} #{fout} >#{flog} 2>&1"
+      fout  = "#{odir}/#{que[:name]}.tsv"
+      flog  = "#{odir}/#{que[:name]}.log"
+      outs << "ruby #{script} #{fout} #{fa} >#{flog} 2>&1"
+      fas  << fa
     }
+
+    ### all query files
+    next if fas.size == 0
+
+    odir  = "#{bdir}/all/feature/aa"; mkdir_p odir
+    fout  = "#{odir}/all.tsv"
+    flog  = "#{odir}/all.log"
+    outs << "ruby #{script} #{fout} #{fas*" "} >#{flog} 2>&1"
   }
 
-  next if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   WriteBatch.call(t, Jobdir, outs)
   RunBatch.call(t, Jobdir, Ncpu, Logdir)
 end
+# }}}
 # }}} tasks
+
+
+# require "minitest/test_task"
+# Minitest::TestTask.create # named test, sensible defaults
+# Minitest::TestTask.new do |t|
+#   t.libs << "test"
+#   t.libs << "lib"
+#   t.libs << "."
+#   t.warning = false
+#   t.test_globs = ["test/**/*_test.rb"]
+# end
+# task :default => :test

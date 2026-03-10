@@ -1,13 +1,17 @@
 
+STDOUT.sync = true; STDERR.sync = true
+
 require 'rake'
+require 'json'
+require 'digest'
 
-idx, minseqlen, name, fque, fa, fjsn = ARGV ### fin, fout, fjson
-flog = "#{fa}.log"
+minseqlen, name, fque, fa, fjsn, flst = ARGV
 MinSeqLen = minseqlen.to_i
-fwl = open(flog, "w")
+flog = "#{fa}.log"
+fwlog = open(flog, "w")
 
-# {{{ write_ent(fque, fw, fwl, id, seq, numseq, numex)
-def write_ent(fque, fw, fwl, id, seq, numseq, numex)
+# {{{ def write_ent(fque, fw, fwlog, id, seq, numseq, numex)
+def write_ent(fque, fw, fwlog, id, seq, numseq, numex)
   seq = seq.join
   len = seq.size
   if len >= MinSeqLen
@@ -21,52 +25,68 @@ def write_ent(fque, fw, fwl, id, seq, numseq, numex)
   end
 
   if (numseq + numex) > 0 and (numseq + numex) % 1_000_000 == 0 
-    fwl.puts "[#{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}] #{fque}: #{numex + numseq} entries parsed."
-    fwl.flush
+    fwlog.puts "[#{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}] #{fque}: #{numex + numseq} entries parsed."
+    fwlog.flush
   end
 
   return [numseq, numex]
 end
 # }}}
 
-# {{{ parse_fasta(fque, fw)
-def parse_fasta(fque, fw, fwl)
-  fwl.puts "[#{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}] start parsing #{fque}" 
-  fwl.flush
+# {{{ def parse_fasta(fque, fw, fwlog, fwl)
+def parse_fasta(fque, fw, fwlog, fwl)
+  fwlog.puts "[#{Time.now.strftime("%Y-%m-%d_%H:%M:%S")}] start parsing #{fque}" 
+  fwlog.flush
   numseq, numex = 0, 0
   ids = {}
 
   ### process each line
   id, seq = "", []
-  open(fque){ |fr|
-    while l = fr.gets
-      if l[0] == ">"
-        numseq, numex = write_ent(fque, fw, fwl, id, seq, numseq, numex) if id != ""
-        id, seq = "", [] ### re-init
 
-        lab = l[1..-1]
-        id = lab.split(/\s+/)[0]
+  ### check if fque is gzipped
+  is_fque_gz = false
+  if fque =~ /\.gz$/ or fque =~ /\.gzip/
+    is_fque_gz = true
+    require 'zlib'
+  end
 
-        ### [!!!] id duplication check
-        raise("#{Errmsg} sequence id #{id} is found twice. Please ensure that all sequence ids in query files are unique.") if ids[id]
-        ids[id] = 1
-      else
-        seq << l.gsub(/\s+/, "")
-      end
+  fr = is_fque_gz ? Zlib::GzipReader.open(fque) : open(fque)
+
+  while l = fr.gets
+    if l[0] == ">"
+      numseq, numex = write_ent(fque, fw, fwlog, id, seq, numseq, numex) if id != ""
+      id, seq = "", [] ### re-init
+
+      lab = l[1..-1]
+      id = lab.split(/\s+/)[0]
+
+      ### [!!!] id duplication check
+      raise("#{Errmsg} sequence id #{id} is found twice. Please ensure that all sequence ids in query files are unique.") if ids[id]
+      ids[id] = 1
+      fwl.puts id
+    else
+      seq << l.gsub(/\s+/, "")
     end
-    numseq, numex = write_ent(fque, fw, fwl, id, seq, numseq, numex) if id != ""
-  }
+  end
+  numseq, numex = write_ent(fque, fw, fwlog, id, seq, numseq, numex) if id != ""
+
+  fr.close
 
   return [numseq, numex]
 end
 # }}}
 
 numseq, numex = 0, 0
-open(fa, "w"){ |fw|
-  numseq, numex = parse_fasta(fque, fw, fwl)
+fw  = open(fa, "w")
+fwl = open(flst, "w")
+numseq, numex = parse_fasta(fque, fw, fwlog, fwl)
+[fw, fwl, fwlog].each{ |_fw| _fw.close }
+
+### write md5
+fasta_MD5 = Digest::MD5.file(fa).to_s
+fasta_ori_MD5 = Digest::MD5.file(fque).to_s
+
+h = {
+  name: name, numseq: numseq, numtooshortseq: numex, fasta: fa, fjson: fjsn, fasta_ori: File.absolute_path(fque), fasta_MD5: fasta_MD5, fasta_ori_MD5: fasta_ori_MD5
 }
-
-h = { idx: idx.to_i, name: name, numseq: numseq, numtooshortseq: numex, fasta: fa, fjson: fjsn, original: File.absolute_path(fque) }
-open(fjsn, "w"){ |fw| fw.puts h.inspect }
-
-fwl.close
+open(fjsn, "w"){ |fw| fw.puts h.to_json }
