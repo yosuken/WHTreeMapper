@@ -58,6 +58,10 @@ EOS
 # {{{ threshold / option default
 e_thre    = "10.0"
 e_gene    = "1e-2"
+minhmmlen = "0"
+minhmmcov = "0.0"
+minalilen = "0"
+minalicov = "0.0"
 minhmmlendom = "0"
 minhmmcovdom = "0.0"
 minalilendom = "0"
