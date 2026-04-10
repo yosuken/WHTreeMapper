@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -lh /lustre/aptmp/yosuke/dev/tool/WHTreeMapper/script/*.rb)",
+      "Bash(du -sh /lustre/aptmp/yosuke/dev/tool/PPdb/refpkg/*)",
+      "Bash(rsync -av --include='*/' --include='*.fa' --include='*.hmm' --include='*.newick' --include='CONTENTS.json' --include='phylo_model*.json' --exclude='*' /lustre/aptmp/yosuke/dev/tool/PPdb/refpkg/wh_rep_2026-03-30/ /lustre/aptmp/yosuke/dev/tool/WHTreeMapper/refpkg/)",
+      "Bash(chmod +x:*)",
+      "Bash(ruby -c /lustre/aptmp/yosuke/dev/tool/WHTreeMapper/WHTreeMapper)",
+      "Bash(ruby -c /lustre/aptmp/yosuke/dev/tool/WHTreeMapper/script/01-1b-A.validate_refpkg_detect.rb)",
+      "Bash(ruby:*)",
+      "Bash(./WHTreeMapper:*)",
+      "Read(//lustre/aptmp/yosuke/Project/AORI/Shintani/data/2024-07-02/rep4/translate/phylogeny_1/mafft/iqtree/iqtree_treeshrink/iTOL_outgroup/**)"
+    ]
+  }
+}

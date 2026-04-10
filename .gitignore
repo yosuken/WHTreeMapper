@@ -13,13 +13,11 @@
 
 ### my.xxx setting file
 /my.*
+
+### test output directory
+/test/wh/out
+
 ### pbslog
 /pbslog
-### test output directory
-/test*
-
-### binary of witch-ng
-/bin/witch-ng
-
 /.filenum/
 /.ruby-lsp/

@@ -1,0 +1,25 @@
+{
+    "metadata": {
+        "create_date": "2026-03-30 10:54:09",
+        "format_version": "1.1",
+        "locus": "B3"
+    },
+    "files": {
+        "phylo_model": "phylo_modela30ha92v.json",
+        "aln_fasta": "B3.fa",
+        "tree": "B3.fasttree.newick",
+        "tree_stats": "B3.fasttree.log"
+    },
+    "md5": {
+        "phylo_model": "ab2bcb79d34f9375831e95efb1a8f7c7",
+        "aln_fasta": "f9f487ac1ce9bcc04d8120275a95d6d3",
+        "tree": "62670403131dd9e55905983ed432fb87",
+        "tree_stats": "9c9fe87e39bd34b6acdfdb7401dcf24b"
+    },
+    "log": [
+        "Stripped refpkg (removed 0 files)",
+        "Loaded initial files into empty refpkg"
+    ],
+    "rollback": null,
+    "rollforward": null
+}

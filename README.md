@@ -1,92 +1,81 @@
 
-# PiPP - a Pipeline for Phylogenetic Placement
+# WHTreeMapper - WH Region Detection and Diamond BLASTP Analysis Tool
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](/LICENSE)
-[![size](https://img.shields.io/github/size/webcaetano/craft/build/phaser-craft.min.js.svg)]()
 
-## currently PiPP is beta version. Any specification might be changed in a future version.
-PiPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below. Very large queries are acceptable.
+## Overview
 
-## install (use conda environment)
+WHTreeMapper detects Walker Homology (WH) regions in query protein sequences using HMM-based prefiltering against 50 WH clade profiles, then performs diamond blastp against a WH reference database.
 
-### [1] make conda environment and install packages
+### Workflow
+
+1. Prefilter query protein sequences by HMM similarity detection (hmmsearch) against 50 WH clade profiles
+2. Extract detected WH regions from query sequences
+3. Merge detected regions and run diamond blastp against WH reference database
+4. Generate `detected.tsv` with clade annotation and diamond blastp results
+
+## Install
+
+### 1. Create conda environment
+
+Using `environment.yaml`:
+
+```bash
+# Using micromamba (recommended)
+micromamba create -n WHTreeMapper -f environment.yaml -y
+micromamba activate WHTreeMapper
+
+# Or using mamba
+mamba env create -f environment.yaml
+mamba activate WHTreeMapper
+
+# Or using conda
+conda env create -f environment.yaml
+conda activate WHTreeMapper
 ```
-$ conda create -n PiPP -y && conda activate PiPP
+
+Dependencies (installed via environment.yaml):
+- ruby (>= 3.2)
+- hmmer (3.3.2)
+- diamond (2.1.9)
+- GNU parallel (>= 20230822)
+
+### 2. Set up bundled data
+
+The following data must be placed in the WHTreeMapper directory:
+
+- `refpkg/` - HMM profiles for 8 WH clades (A-H) and 42 subclades
+- `db/wh.dmnd` - Diamond database of WH representative sequences
+- `db/seq_info.tsv` - Sequence-to-clade mapping table
+
+## Usage
+
+```bash
+micromamba activate WHTreeMapper
+./WHTreeMapper [options] -q <query protein fasta(s)> -o <output dir>
 ```
 
-### [2] install packages
+### Options
+
 ```
-### create environment (name: PiPP_v0.3.0) and install packages
-### change 'micromamba' to 'mamba' or 'conda' if you use mamba or conda instead of micromamba
-$ v=PiPP_v0.3.0 && micromamba create -n $v -c conda-forge -c bioconda ruby=3.4.5 hmmer=3.4 parallel=20250822 gappa=0.9.0 pplacer=1.1.alpha19 mafft=7.520 fasttree=2.2.0 epa-ng=0.3.8 python=3.12 -y && micromamba activate $v && pip install apples taxtastic
-```
-
-## usage 
-```
-### PiPP ver 0.3.0 (2025-09-27) ###
-
-PiPP - Pipeline for phylogenetic placement.
-PiPP is developed as a tool for phylogenetic placement onto a clade or taxonomy defined phylogenetic tree through procedures below.
-
-1. prefilter query sequences by similarity detection (hmmsearch). Queries and references should be protein sequences at this moment.
-2. align query sequences to a given reference alignment ('witch-ng', 'mafft --add', or 'mafft --addfragments')
-3. perform phylogenetic placement ('pplacer', 'apples-2', or 'epa-ng') with efficient parallelization using 'gappa prepare chunkify' and 'gappa prepare unchunkify'
-4. analysis of placed sequences
-  a. assign clade/taxonomy and generate statistics ('gappa examine assign')
-  b. extract placed sequences and placement file for each clade/taxonomy ('gappa prepare extract')
-  c. extract placed sequences and placement file for each clade/taxonomy ('gappa prepare extract')
-
-[usage]
-$ PiPP [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
-
-[dependencies]
-- ruby (ver >= 2.0)
-- hmmer (ver >= 3.0)
-- mafft (tested by 7.453 and 7.520)
-- gappa (tested by 0.6.0)
-- pplacer (tested by 1.1.alpha19)
-- witch-ng (ver >= 0.0.4)
-
-[output files]
-  result/<refpkg name>/{all,each}/{seq,alignment,placement,assign,extract,...} -- result of placement and further analysis
-
-[options]
 [File/directory]
     -q, --query FILE(S)              Query sequence file(s) (protein fasta, can be gzipped) [required]
-    -r, --refpkg DIR(S)              Reference package(s) made by taxtastic [required]
     -o, --outdir PATH                Output directory [required]
-        --[no-]overwrite             Overwrite output directory (default: overwrite)
+        --[no-]overwrite             Overwrite output directory (default: no overwrite)
 
-[Task]
-        --only-detect                Only detect homologous regions of input sequences using hmmsearch
-
-[Prefilter (result cutoffs)]
+[HMM prefilter]
     -e, --evalue NUM                 E-value threshold of hmmsearch (default: 1e-5)
-        --minseqlen INT              set a cutoff of minimum amino acid length of input sequences (default: 0)
-        --minhmmlen INT              Minimum hmm hit length in linked result of hmmsearch (default: 0)
-        --minhmmcov FLOAT            Minimum fraction of hmm length in linked result of hmmsearch (default: 0)
-        --minalilen INT              Minimum hmm hit length in linked result of hmmsearch (default: 0)
-        --minalicov FLOAT            Minimum fraction of hmm length in linked result of hmmsearch (default: 0)
-
-[Prefilter (domain-level cutoffs)]
         --evaluedom NUM              Domain E-value threshold of hmmsearch (default: 1e-2)
-        --minhmmlendom INT           Minimum hmm hit length in domain-level result of hmmsearch (default: 0)
-        --minhmmcovdom FLOAT         Minimum fraction of hmm length in domain-level result of hmmsearch (default: 0)
-        --minalilendom INT           Minimum hmm hit length in domain-level result of hmmsearch (default: 0)
-        --minalicovdom FLOAT         Minimum fraction of hmm length in domain-level result of hmmsearch (default: 0)
+        --minhmmcov FLOAT            Minimum HMM coverage fraction in linked result (default: 0.8)
+        --minhmmcovdom FLOAT         Minimum HMM coverage fraction in domain-level result (default: 0.2)
 
-[Alignment]
-        --aligner OPTION             query sequence aligner (default: witch-ng)
-        --mafft-method METHOD        MAFFT add method (default: E-INS-i)
-
-[Placement]
-        --placer OPTION              query sequence aligner (default: pplacer) [pplacer|apples-2|epa-ng]
-        --epa-ng-model MODEL         model for epa-ng, either model name (e.g., LG, PROTGTR, ...) or tree log file (compatible with RAxML 8.x and IQ-TREE)
-                                     [required when '--placer epa-ng' is selected]
-                                     Please refer to epa-ng document. [https://github.com/pierrebarbera/epa-ng?tab=readme-ov-file#setting-the-model-parameters]
+[Diamond BLASTP]
+        --dmnd-evalue NUM            E-value threshold for diamond blastp (default: 1e-5)
+        --dmnd-id NUM                Minimum identity % for diamond blastp (default: 40)
+        --dmnd-subject-cover NUM     Minimum subject coverage % for diamond blastp (default: 80)
+        --dmnd-max-target-seqs INT   Max target sequences per query for diamond blastp (default: 1)
 
 [Computation]
-    -c, --chunk-size INT             Chunk size of 'gappa prepare chunkify' (default: 10000)
     -n, --ncpus INT                  Number of CPUs to use (default: 1)
 
 [General]
@@ -94,6 +83,84 @@ $ PiPP [options] -q <query fasta(s)> -r <refpkg dir(s)> -o <output dir>
     -v, --version                    Show version
 ```
 
-## citation
+### Examples
+
+```bash
+# Basic usage
+./WHTreeMapper -q query.faa -o results
+
+# Multiple query files with 4 CPUs
+./WHTreeMapper -q "queries/*.faa" -o results -n 4
+
+# Overwrite existing output
+./WHTreeMapper -q query.faa -o results --overwrite
+
+# Custom HMM and diamond thresholds
+./WHTreeMapper -q query.faa -o results -e 1e-3 --minhmmcov 0.5 --dmnd-id 30 --dmnd-subject-cover 60
+```
+
+## Output
+
+```
+<outdir>/
+  detected.tsv                             -- main result
+  diamond/dmnd.blastp.out                  -- raw diamond blastp output
+  diamond/query/region.faa                 -- merged WH regions used as diamond query
+  hmm_hits/<clade>/seq/region.fa           -- detected WH region sequences (per clade)
+  hmm_hits/<clade>/seq/whole.fa            -- full-length sequences with WH hits (per clade)
+```
+
+### detected.tsv
+
+Main output file. Each row corresponds to a query sequence with a WH region detected by hmmsearch and matched via diamond blastp to the WH reference database.
+
+| # | Column | Description |
+|---|--------|-------------|
+| 0 | query | Query sequence ID (with region suffix) |
+| 1 | detected_wh_region | Extracted WH region coordinates in the query (e.g., `10-109`) |
+| 2 | clade | WH clade of the best diamond hit (A, B, C, ..., H) |
+| 3 | subclade | WH subclade (A1, A2, B1, ..., H22). Empty if hit is at the clade level |
+| 4 | index_in_tree | Index of the matched leaf in the WH reference tree |
+| 5 | leaf_name | Leaf name in the WH reference tree |
+| 6 | qseqid | Diamond: query sequence ID |
+| 7 | sseqid | Diamond: subject sequence ID |
+| 8 | pident | Diamond: percentage of identical matches |
+| 9 | length | Diamond: alignment length |
+| 10 | mismatch | Diamond: number of mismatches |
+| 11 | gapopen | Diamond: number of gap openings |
+| 12 | qstart | Diamond: start of alignment in query |
+| 13 | qend | Diamond: end of alignment in query |
+| 14 | sstart | Diamond: start of alignment in subject |
+| 15 | send | Diamond: end of alignment in subject |
+| 16 | evalue | Diamond: expect value |
+| 17 | bitscore | Diamond: bit score |
+| 18 | qlen | Diamond: query sequence length |
+| 19 | slen | Diamond: subject sequence length |
+| 20 | qcovhsp | Diamond: query coverage per HSP (%) |
+| 21 | scovhsp | Diamond: subject coverage per HSP (%) |
+
+### Default parameters
+
+- HMM detection: `-e 1e-5 --evaluedom 1e-2 --minhmmcov 0.8 --minhmmcovdom 0.2`
+- Diamond BLASTP: `--dmnd-evalue 1e-5 --dmnd-id 40 --dmnd-subject-cover 80 --dmnd-max-target-seqs 1`
+- Diamond BLASTP (fixed): `--ultra-sensitive --dbsize 1e9`
+
+## Test
+
+```bash
+micromamba activate WHTreeMapper
+cd test/wh
+./run_test.sh
+```
+
+Or using make directly:
+
+```bash
+cd test/wh
+make test    # run test
+make clean   # remove test output
+```
+
+## Citation
 ```
 ```

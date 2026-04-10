@@ -4,85 +4,80 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PiPP (Pipeline for Phylogenetic Placement) is a Ruby-based bioinformatics tool for phylogenetic placement of query sequences onto reference phylogenetic trees. The pipeline handles large-scale queries through a multi-step workflow involving sequence prefiltering, alignment, and phylogenetic placement analysis.
+WHTreeMapper is a Ruby-based bioinformatics tool for detecting Walker Homology (WH) regions in protein sequences and performing diamond blastp analysis against a WH reference database. It uses HMM-based prefiltering against 50 WH clade profiles to extract homologous regions, then identifies best hits via diamond blastp.
 
-## Build and Test Commands
+This tool was derived from PiPP (Pipeline for Phylogenetic Placement) and specialized for WH region analysis.
 
-### Running Tests
-```bash
-rake test
-# Or using the default task
-rake
-```
+## Running the Tool
 
-### Running the Main Pipeline
 ```bash
 # Basic usage
-./PiPP -q <query_fasta> -r <refpkg_dir> -o <output_dir>
+./WHTreeMapper -q <query_protein_fasta> -o <output_dir>
 
-# Example with options
-./PiPP -q "queries/*.fa" -r "refpkgs/*" -o results --ncpus 4 --evalue 1e-10
+# With multiple CPUs
+./WHTreeMapper -q "queries/*.faa" -o results -n 4
+
+# Overwrite existing output
+./WHTreeMapper -q query.faa -o results --overwrite -n 2
 ```
-
-### Development Commands
-The project uses Rake as its build system. Key Rake tasks are defined in `PiPP.rake`.
 
 ## Architecture Overview
 
 ### Core Components
 
-1. **Main Pipeline Script (`PiPP`)**: Bash wrapper that validates dependencies, parses command-line arguments, and invokes the Rake-based workflow
+1. **Main Script (`WHTreeMapper`)**: Ruby CLI that validates dependencies, parses arguments, and invokes the Rake workflow
 
-2. **Rake Workflow (`PiPP.rake`)**: Orchestrates the entire pipeline through sequential tasks:
-   - Query validation and preprocessing
-   - Reference package validation  
-   - HMM-based sequence prefiltering (hmmsearch)
-   - Sequence alignment (MAFFT)
-   - Phylogenetic placement (pplacer with gappa chunking)
-   - Analysis and visualization
+2. **Rake Workflow (`WHTreeMapper.rake`)**: Orchestrates the pipeline through 10 sequential tasks:
+   - Query validation and preprocessing (01-1a-A, 01-1a-B)
+   - Reference package validation (01-1b-A, 01-1b-B)
+   - HMM-based prefiltering with hmmsearch (01-2a, 01-2b)
+   - Detected sequence extraction (01-2c, 01-2d)
+   - Region merging for diamond query (02-1)
+   - Diamond BLASTP analysis (02-2)
 
-3. **Ruby Processing Scripts (`script/`)**: Specialized utilities for:
-   - Sequence validation and trimming
-   - HMM search result parsing
-   - Alignment processing and format conversion
-   - Feature extraction
+3. **Ruby Processing Scripts (`script/`)**: Utilities for sequence validation, HMM result parsing, and refpkg validation
 
-### Pipeline Workflow
+### Bundled Data
 
-The pipeline follows a numbered task sequence (01-1a through 01-6a):
-- **01-1x**: Query validation and preprocessing
-- **01-2x**: HMM-based prefiltering using hmmsearch
-- **01-3x**: Chunked alignment and phylogenetic placement
-- **01-4x**: Placement analysis (assignment, grafting, visualization)
-- **01-5x**: Comparative analysis (KRD, EdgePCA)
-- **01-6x**: Feature extraction
+- `refpkg/`: 50 WH clade HMM profiles (A, A1, A2, B, B1, ..., H22), each containing `.fa`, `.hmm`, `.fasttree.newick`
+- `db/wh.dmnd`: Diamond database of WH representative sequences
 
 ### Key Dependencies
 
-External tools required:
-- hmmer (≥3.0) for sequence similarity detection
-- mafft (7.453+) for sequence alignment  
-- gappa (0.6.0+) for placement processing and chunking
-- pplacer (1.1.alpha19+) for phylogenetic placement
-- GNU parallel for parallelization
+- ruby (>= 2.0)
+- hmmer (>= 3.0) for hmmsearch
+- diamond (>= 2.1.9) for blastp
+- GNU parallel (when --ncpus > 1)
 
-### Directory Structure
+### Pipeline Workflow
 
-- `script/`: Ruby processing utilities
-- `test/`: Minitest-based test suite
-- Output structure: `result/<refpkg>/{all,each}/{query,alignment,placement,assign,extract}/`
+```
+Input: protein FASTA → hmmsearch (50 HMM profiles) → parse hits → extract WH regions
+→ merge regions → diamond blastp → output
+```
 
-### Configuration
+### Output Structure
 
-The pipeline accepts extensive command-line configuration including:
-- E-value thresholds for prefiltering
-- Alignment methods (FFT-NS-2, FFT-NS-i, E-INS-i)  
-- Chunk sizes for parallelization
-- Extraction levels for taxonomic analysis
+```
+<outdir>/
+  result/<clade>/{all,each}/seq/{whole,region}.fa  -- detected sequences per clade
+  result/diamond/dmnd.blastp.out                   -- diamond blastp results (tab format)
+  diamond/query/region.faa                         -- merged query for diamond
+  prefilter/                                       -- intermediate hmmsearch results
+  log/                                             -- execution logs
+```
+
+### Diamond BLASTP Parameters (hardcoded)
+
+- `--ultra-sensitive --id 40 --subject-cover 80 --max-target-seqs 1 --dbsize 1e9 --evalue 1e-5`
+- Output format: qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen qcovhsp scovhsp
+
+### HMM Detection Parameters (hardcoded)
+
+- `--evalue 1e-5 --evaluedom 1e-2 --minhmmcov 0.8 --minhmmcovdom 0.2`
 
 ## Development Notes
 
-- Uses Ruby 2.7+ with Rake for task orchestration
-- Implements custom Range extensions for overlap detection
-- Batch job generation for parallel execution
-- Comprehensive logging and error handling throughout pipeline
+- Uses Ruby 2.0+ with Rake for task orchestration
+- Batch job generation via WriteBatch/RunBatch lambdas for parallel execution
+- The legacy PiPP files (PiPP, PiPP.rake, PiPP.sh) remain in the repo for reference

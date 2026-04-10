@@ -1,0 +1,383 @@
+#!/usr/bin/env ruby
+
+STDOUT.sync = true ### for real-time output
+
+require 'optparse'
+require 'rake'
+
+##################################
+### entry point of WHTreeMapper ###
+##################################
+
+# {{{ class WHTreeMapper
+class WHTreeMapper
+  VERSION  = "1.0.0"
+  MODIDATE = "2026-04-10"
+
+  # ANSI color codes
+  ERRMSG = "\e[1;31m[error]\e[0m"
+  SCCMSG = "\e[1;32m[success]\e[0m"
+
+  # {{{ def initialize
+  def initialize
+    @options = {
+      # Required options
+      query: nil,
+      outdir: nil,
+
+      # Optional flags
+      overwrite: false,
+
+      # HMM prefilter options
+      evalue:       1e-5,
+      evaluedom:    1e-2,
+      minhmmcov:    0.8,
+      minhmmcovdom: 0.2,
+
+      # Diamond BLASTP options
+      dmnd_evalue:       1e-5,
+      dmnd_id:           40,
+      dmnd_subject_cover: 80,
+      dmnd_max_target_seqs: 1,
+
+      # Computation options
+      ncpus: 1
+    }
+
+    @progname   = File.basename($0)
+    @progpath   = File.absolute_path($0)
+    @stime      = Time.now
+    @stime_str  = @stime.strftime("%Y-%m-%d_%H:%M:%S")
+    @script_dir = File.dirname(File.expand_path($0))
+    @incmd      = "#{$0} #{ARGV.join(' ')}"
+  end
+  # }}} def initialize
+
+  # {{{ def usage
+  def usage
+    <<~EOF
+    \e[1;35m### #{@progname} ver #{VERSION} (#{MODIDATE}) ###\e[0m
+
+    #{@progname} - WH (Walker Homology) region detection and diamond blastp analysis tool.
+    #{@progname} detects WH regions in query protein sequences using HMM-based prefiltering
+    against 50 WH clade profiles, then performs diamond blastp against a WH reference database.
+
+    Workflow:
+    1. Prefilter query sequences by HMM similarity detection (hmmsearch) against WH clade profiles
+    2. Extract detected WH regions from query sequences
+    3. Merge detected regions and run diamond blastp against WH reference database
+
+    \e[1;32m[usage]\e[0m
+    $ #{@progname} [options] -q <query protein fasta(s)> -o <output dir>
+
+    \e[1;32m[dependencies]\e[0m
+    - ruby (ver >= 2.0)
+    - hmmer (ver >= 3.0)
+    - diamond (ver >= 2.1.9)
+    - GNU parallel (when --ncpus > 1)
+
+    \e[1;32m[output files]\e[0m
+      result/<clade>/{all,each}/seq/  -- detected WH region sequences per clade
+      result/dmnd.blastp.out          -- diamond blastp results (tabular format)
+
+    \e[1;32m[options]\e[0m
+    EOF
+  end
+  # }}} def usage
+
+  # {{{ def parse_options
+  def parse_options
+    parser = OptionParser.new do |opts|
+      opts.banner = usage
+
+      # {{{ File/directory options
+      opts.on("[File/directory]")
+      opts.on("-q", "--query FILE(S)", "Query sequence file(s) (protein fasta, can be gzipped) [required]") do |v|
+        @options[:query] = v
+      end
+
+      opts.on("-o", "--outdir PATH", "Output directory [required]") do |v|
+        @options[:outdir] = v
+      end
+
+      opts.on("--[no-]overwrite", "Overwrite output directory (default: no overwrite)") do
+        @options[:overwrite] = true
+      end
+      # }}}
+
+      # {{{ HMM prefilter options
+      opts.on("\n[HMM prefilter]")
+
+      opts.on("-e", "--evalue NUM", Float, "E-value threshold of hmmsearch (default: 1e-5)") do |v|
+        @options[:evalue] = v
+      end
+
+      opts.on("--evaluedom NUM", Float, "Domain E-value threshold of hmmsearch (default: 1e-2)") do |v|
+        @options[:evaluedom] = v
+      end
+
+      opts.on("--minhmmcov FLOAT", Float, "Minimum HMM coverage fraction in linked result (default: 0.8)") do |v|
+        @options[:minhmmcov] = v
+      end
+
+      opts.on("--minhmmcovdom FLOAT", Float, "Minimum HMM coverage fraction in domain-level result (default: 0.2)") do |v|
+        @options[:minhmmcovdom] = v
+      end
+      # }}}
+
+      # {{{ Diamond BLASTP options
+      opts.on("\n[Diamond BLASTP]")
+
+      opts.on("--dmnd-evalue NUM", Float, "E-value threshold for diamond blastp (default: 1e-5)") do |v|
+        @options[:dmnd_evalue] = v
+      end
+
+      opts.on("--dmnd-id NUM", Float, "Minimum identity % for diamond blastp (default: 40)") do |v|
+        @options[:dmnd_id] = v
+      end
+
+      opts.on("--dmnd-subject-cover NUM", Float, "Minimum subject coverage % for diamond blastp (default: 80)") do |v|
+        @options[:dmnd_subject_cover] = v
+      end
+
+      opts.on("--dmnd-max-target-seqs INT", Integer, "Max target sequences per query for diamond blastp (default: 1)") do |v|
+        @options[:dmnd_max_target_seqs] = v
+      end
+      # }}}
+
+      # {{{ Computation options
+      opts.on("\n[Computation]")
+
+      opts.on("-n", "--ncpus INT", Integer, "Number of CPUs to use (default: 1)") do |v|
+        @options[:ncpus] = v
+      end
+      # }}}
+
+      # {{{ General options
+      opts.on("\n[General]")
+
+      opts.on("-h", "--help", "Show this help message") do
+        puts opts
+        exit 0
+      end
+
+      opts.on("-v", "--version", "Show version") do
+        puts VERSION
+        exit 0
+      end
+      # }}}
+    end
+
+    begin
+      parser.parse!
+    rescue OptionParser::InvalidOption => e
+      $stderr.puts "#{ERRMSG} #{e.message}"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    rescue OptionParser::InvalidArgument => e
+      $stderr.puts "#{ERRMSG} #{e.message}"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    # Handle remaining arguments
+    unless ARGV.empty?
+      $stderr.puts %|#{ERRMSG} unparsable argument (#{ARGV.first}).|
+      $stderr.puts %|        Note: do not forget quotation marks to use wildcards, like `-q "query_1 query_2"` or `-q 'query_*'`|
+      exit 1
+    end
+  end
+  # }}} def parse_options
+
+  # {{{ def validate_options
+  def validate_options
+    unless @options[:query]
+      $stderr.puts "#{ERRMSG}  -q, --query <fasta file(s)> should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    unless @options[:outdir]
+      $stderr.puts "#{ERRMSG}  -o, --outdir should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    # Check output directory
+    if File.directory?(@options[:outdir]) && !@options[:overwrite]
+      $stderr.puts "#{ERRMSG}  -o, --outdir #{@options[:outdir]} already exists. Use --overwrite to overwrite it."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    if File.exist?(@options[:outdir]) && !File.directory?(@options[:outdir])
+      $stderr.puts "#{ERRMSG}  -o, --outdir #{@options[:outdir]} already exists and not directory (is it a file?)."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    if @options[:ncpus] <= 0
+      $stderr.puts "#{ERRMSG}  --ncpus '#{@options[:ncpus]}' should be positive integer."
+      exit 1
+    end
+
+    # Check bundled resources
+    refpkg_dir = "#{@script_dir}/refpkg"
+    unless File.directory?(refpkg_dir) && Dir["#{refpkg_dir}/*"].size > 0
+      $stderr.puts "#{ERRMSG}  Bundled refpkg not found at #{refpkg_dir}."
+      exit 1
+    end
+
+    diamond_db = "#{@script_dir}/db/wh.dmnd"
+    unless File.exist?(diamond_db)
+      $stderr.puts "#{ERRMSG}  Bundled diamond database not found at #{diamond_db}."
+      exit 1
+    end
+
+    @outdir_exist = File.directory?(@options[:outdir]) && @options[:overwrite]
+  end
+  # }}} def validate_options
+
+  # {{{ def check_dependencies
+  def check_dependencies
+    commands = ["hmmsearch", "diamond", "ruby"]
+    commands << "parallel" if @options[:ncpus] > 1
+
+    commands.each do |cmd|
+      unless system("command -v #{cmd} >/dev/null 2>&1")
+        $stderr.puts "#{ERRMSG} #{cmd} is not available. Aborting."
+        exit 1
+      end
+    end
+
+    ruby_version = RUBY_VERSION.to_f
+    if ruby_version < 2.0
+      $stderr.puts "#{ERRMSG} ruby (version >=2.0) is required. Aborting."
+      exit 1
+    end
+  end
+  # }}} def check_dependencies
+
+  # {{{ def setup_logging
+  def setup_logging
+    @logdir = File.join(@options[:outdir], "log")
+    FileUtils.mkdir_p(@logdir)
+
+    @logfile = File.join(@logdir, "#{@stime_str}.#{@progname}.log")
+
+    log_header = <<~EOF
+
+    \e[1;32m===== command line\e[0m
+
+    $ #{@incmd}
+
+    \e[1;32m===== log file\e[0m
+
+    #{@logfile}
+
+    \e[1;32m===== check version of #{@progname}: #{@progpath}\e[0m
+
+    #{VERSION}
+
+    EOF
+
+    File.open(@logfile, "w") { |f| f.puts log_header }
+    puts log_header
+  end
+  # }}} def setup_logging
+
+  # {{{ def run_rake
+  def run_rake
+    rakefile = File.join(@script_dir, "WHTreeMapper.rake")
+
+    env_vars = {
+      "outdir"       => @options[:outdir],
+      "query"        => @options[:query],
+      "refpkg"       => "#{@script_dir}/refpkg/*",
+      "diamond_db"   => "#{@script_dir}/db/wh.dmnd",
+      "seq_info"     => "#{@script_dir}/db/seq_info.tsv",
+      "outdir_exist" => @outdir_exist ? "true" : "",
+      "evalue"       => @options[:evalue].to_s,
+      "evaluedom"    => @options[:evaluedom].to_s,
+      "minseqlen"    => "0",
+      "minhmmlen"    => "0",
+      "minhmmcov"    => @options[:minhmmcov].to_s,
+      "minalilen"    => "0",
+      "minalicov"    => "0",
+      "minhmmlendom" => "0",
+      "minhmmcovdom" => @options[:minhmmcovdom].to_s,
+      "minalilendom" => "0",
+      "minalicovdom" => "0",
+      "dmnd_evalue"          => @options[:dmnd_evalue].to_s,
+      "dmnd_id"              => @options[:dmnd_id].to_s,
+      "dmnd_subject_cover"   => @options[:dmnd_subject_cover].to_s,
+      "dmnd_max_target_seqs" => @options[:dmnd_max_target_seqs].to_s,
+      "ncpus"        => @options[:ncpus].to_s,
+    }
+
+    env_vars.each { |k, v| ENV[k] = v }
+
+    begin
+      require 'open3'
+      status = nil
+      open(@logfile, "a") do |fw|
+        fw.sync = true
+        Open3.popen3("rake -f #{rakefile} 2>&1") do |stdin, stdout, _, wait_thr|
+          stdin.close
+          stdout.each { |l|
+            fw.puts l
+            STDOUT.puts l
+          }
+          status = wait_thr.value.exitstatus
+        end
+      end
+
+      etime     = Time.now
+      etime_str = etime.strftime("%Y-%m-%d %H:%M:%S %z")
+
+      if status == 0
+        sfile = File.join(@logdir, "#{@stime_str}.#{@progname}.success")
+        smsg  = "#{SCCMSG} run finished: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+        File.write(sfile, smsg)
+        $stderr.puts smsg
+      else
+        efile = File.join(@logdir, "#{@stime_str}.#{@progname}.error")
+        emsg  = "#{ERRMSG} run aborted: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+        File.write(efile, emsg)
+        $stderr.puts emsg
+        exit 1
+      end
+    rescue Interrupt
+      etime     = Time.now
+      etime_str = etime.strftime("%Y-%m-%d %H:%M:%S %z")
+
+      efile = File.join(@logdir, "#{@stime_str}.#{@progname}.error")
+      emsg  = "#{ERRMSG} run interrupted: #{etime_str}. elapsed time: #{etime - @stime} seconds."
+      File.write(efile, emsg)
+      $stderr.puts emsg
+      exit 1
+    end
+  end
+  # }}} def run_rake
+
+  # {{{ def run
+  def run
+    parse_options
+    validate_options
+    check_dependencies
+
+    if @outdir_exist
+      puts "\n\n\e[1;35mWarning:\e[0m output directory #{@options[:outdir]} already exists. Overwrite it.\n\n"
+      STDOUT.flush
+    end
+
+    setup_logging
+    run_rake
+  end
+  # }}} def run
+end
+# }}} class WHTreeMapper
+
+if __FILE__ == $0
+  WHTreeMapper.new.run
+end

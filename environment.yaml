@@ -1,0 +1,9 @@
+name: WHTreeMapper
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ruby>=3.2
+  - hmmer=3.3.2
+  - diamond=2.1.9
+  - parallel>=20230822
