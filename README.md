@@ -1,11 +1,11 @@
 
-# WHTreeMapper - WH Region Detection and Diamond BLASTP Analysis Tool
+# WHTreeMapper - Detection of WH RIPs and their classification based on the WH reference tree
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](/LICENSE)
 
 ## Overview
 
-WHTreeMapper detects Walker Homology (WH) regions in query protein sequences using HMM-based prefiltering against 50 WH clade profiles (8 clades and 42 subclades), then performs diamond blastp against a WH reference database.
+WHTreeMapper detects winged-helix (WH) regions of WH RIPs (replication initiation proteins) in query protein sequences using HMM-based prefiltering against 50 WH clade profiles (8 clades and 42 subclades), then performs diamond blastp against a WH reference database.
 
 ### Workflow
 
