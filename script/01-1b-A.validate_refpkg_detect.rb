@@ -1,7 +1,6 @@
 
 STDOUT.sync = true; STDERR.sync = true
 
-require 'rake'
 require 'json'
 
 rpkg, odir, falnO, ftreO, fhmmO = ARGV

@@ -9,7 +9,9 @@
       "Bash(ruby -c /lustre/aptmp/yosuke/dev/tool/WHTreeMapper/script/01-1b-A.validate_refpkg_detect.rb)",
       "Bash(ruby:*)",
       "Bash(./WHTreeMapper:*)",
-      "Read(//lustre/aptmp/yosuke/Project/AORI/Shintani/data/2024-07-02/rep4/translate/phylogeny_1/mafft/iqtree/iqtree_treeshrink/iTOL_outgroup/**)"
+      "Read(//lustre/aptmp/yosuke/Project/AORI/Shintani/data/2024-07-02/rep4/translate/phylogeny_1/mafft/iqtree/iqtree_treeshrink/iTOL_outgroup/**)",
+      "Bash(micromamba run:*)",
+      "Bash(grep -E '\\(Created|success|error|p \\\\$fques|\\\\[{\\)')"
     ]
   }
 }

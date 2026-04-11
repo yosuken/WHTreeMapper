@@ -77,8 +77,9 @@ class WHTreeMapper
     - GNU parallel (when --ncpus > 1)
 
     \e[1;32m[output files]\e[0m
-      result/<clade>/{all,each}/seq/  -- detected WH region sequences per clade
-      result/dmnd.blastp.out          -- diamond blastp results (tabular format)
+      detected.tsv                    -- main result (clade annotation + diamond blastp hits)
+      diamond/dmnd.blastp.out         -- raw diamond blastp output
+      hmm_hits/<clade>/seq/           -- detected WH region sequences per clade
 
     \e[1;32m[options]\e[0m
     EOF
@@ -100,8 +101,8 @@ class WHTreeMapper
         @options[:outdir] = v
       end
 
-      opts.on("--[no-]overwrite", "Overwrite output directory (default: no overwrite)") do
-        @options[:overwrite] = true
+      opts.on("--[no-]overwrite", "Overwrite output directory (default: no overwrite)") do |v|
+        @options[:overwrite] = v
       end
       # }}}
 

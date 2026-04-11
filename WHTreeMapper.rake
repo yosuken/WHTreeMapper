@@ -126,8 +126,7 @@ task :default do
   $fpkgs    = []
   $rnames   = {}
 
-  ## Odir exist?
-  $stderr.puts "\n\n#{Warmsg} output directory #{Odir} already exists. Overwrite it.\n\n" if OdirExist == "true"
+  ## Odir exist? (warning is already printed by WHTreeMapper entry point)
 
   ### run
   NumStep  = Tasks.size
@@ -301,7 +300,6 @@ task "01-2a.hmmsearch", ["step"] do |t, args|
   puts "### number of cpu per a hmmsearch: #{ncpu} CPUs (total: #{Ncpu})"
   puts "###"
 
-  p $fques
   $fques.each{ |que|
     next if que[:numseq] == 0
     odir = "#{PreFildir}/#{que[:name]}/out"; mkdir_p odir

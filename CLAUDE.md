@@ -60,19 +60,20 @@ Input: protein FASTA → hmmsearch (50 HMM profiles) → parse hits → extract 
 
 ```
 <outdir>/
-  result/<clade>/{all,each}/seq/{whole,region}.fa  -- detected sequences per clade
-  result/diamond/dmnd.blastp.out                   -- diamond blastp results (tab format)
-  diamond/query/region.faa                         -- merged query for diamond
-  prefilter/                                       -- intermediate hmmsearch results
-  log/                                             -- execution logs
+  detected.tsv                             -- main result (clade annotation + diamond hits)
+  diamond/dmnd.blastp.out                  -- raw diamond blastp output
+  diamond/query/region.faa                 -- merged query for diamond
+  hmm_hits/<clade>/seq/{whole,region}.fa   -- detected sequences per clade
+  prefilter/                               -- intermediate hmmsearch results
+  log/                                     -- execution logs
 ```
 
-### Diamond BLASTP Parameters (hardcoded)
+### Diamond BLASTP Parameters (default)
 
 - `--ultra-sensitive --id 40 --subject-cover 80 --max-target-seqs 1 --dbsize 1e9 --evalue 1e-5`
 - Output format: qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen qcovhsp scovhsp
 
-### HMM Detection Parameters (hardcoded)
+### HMM Detection Parameters (default)
 
 - `--evalue 1e-5 --evaluedom 1e-2 --minhmmcov 0.8 --minhmmcovdom 0.2`
 
@@ -80,4 +81,3 @@ Input: protein FASTA → hmmsearch (50 HMM profiles) → parse hits → extract 
 
 - Uses Ruby 2.0+ with Rake for task orchestration
 - Batch job generation via WriteBatch/RunBatch lambdas for parallel execution
-- The legacy PiPP files (PiPP, PiPP.rake, PiPP.sh) remain in the repo for reference
