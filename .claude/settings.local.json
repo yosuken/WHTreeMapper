@@ -11,7 +11,11 @@
       "Bash(./WHTreeMapper:*)",
       "Read(//lustre/aptmp/yosuke/Project/AORI/Shintani/data/2024-07-02/rep4/translate/phylogeny_1/mafft/iqtree/iqtree_treeshrink/iTOL_outgroup/**)",
       "Bash(micromamba run:*)",
-      "Bash(grep -E '\\(Created|success|error|p \\\\$fques|\\\\[{\\)')"
+      "Bash(grep -E '\\(Created|success|error|p \\\\$fques|\\\\[{\\)')",
+      "WebFetch(domain:www.biorxiv.org)",
+      "Bash(curl -sL \"https://api.crossref.org/works/10.1101/2024.09.03.610885\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c ':*)"
     ]
   }
 }

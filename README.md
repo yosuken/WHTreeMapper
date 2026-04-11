@@ -154,5 +154,5 @@ cd test/wh
 ```
 
 ## Citation
-```
-```
+
+Nishimura Y, Kaneko K, Kamijo T, Isogai N, Tokuda M, Xie H, Tsuda Y, Hirabayashi A, Moriuchi R, Dohra H, Kimbara K, Suzuki-Minakuchi C, Nojiri H, Suzuki H, Suzuki M, Shintani M. A replication-centered phylogeny illuminates the evolutionary landscape of bacterial plasmids. *bioRxiv* (2024). doi: [10.1101/2024.09.03.610885](https://doi.org/10.1101/2024.09.03.610885)
