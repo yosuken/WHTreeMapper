@@ -5,11 +5,11 @@
 
 ## Overview
 
-WHTreeMapper detects Walker Homology (WH) regions in query protein sequences using HMM-based prefiltering against 50 WH clade profiles, then performs diamond blastp against a WH reference database.
+WHTreeMapper detects Walker Homology (WH) regions in query protein sequences using HMM-based prefiltering against 50 WH clade profiles (8 clades and 42 subclades), then performs diamond blastp against a WH reference database.
 
 ### Workflow
 
-1. Prefilter query protein sequences by HMM similarity detection (hmmsearch) against 50 WH clade profiles
+1. Prefilter query protein sequences by HMM similarity detection (hmmsearch) against 50 WH clade profiles (8 clades and 42 subclades)
 2. Extract detected WH regions from query sequences
 3. Merge detected regions and run diamond blastp against WH reference database
 4. Generate `detected.tsv` with clade annotation and diamond blastp results
@@ -21,7 +21,7 @@ WHTreeMapper detects Walker Homology (WH) regions in query protein sequences usi
 Using `environment.yaml`:
 
 ```bash
-# Using micromamba (recommended)
+# Using micromamba
 micromamba create -n WHTreeMapper -f environment.yaml -y
 micromamba activate WHTreeMapper
 
@@ -151,14 +151,6 @@ Main output file. Each row corresponds to a query sequence with a WH region dete
 micromamba activate WHTreeMapper
 cd test/wh
 ./run_test.sh
-```
-
-Or using make directly:
-
-```bash
-cd test/wh
-make test    # run test
-make clean   # remove test output
 ```
 
 ## Citation
