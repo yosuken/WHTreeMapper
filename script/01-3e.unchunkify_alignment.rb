@@ -5,7 +5,7 @@ fori, fas, alns, ques, adir, bdir = ARGV
 
 require 'rake'
 
-## fori: alignment given by refpkg
+## fori: alignment given by refhmm
 ### fas  = "#{Cnkdir}/#{pkg[:name]}/chunk/chunk_*.fasta"
 fas  =  Dir[fas].sort_by{ |fa| fa.split("/")[-1].split(".")[0].gsub(/^chunk_/, "").to_i }
 ### alns = "#{Cnkdir}/#{pkg[:name]}/alignment/chunk_*/#{Aligner}.fa"
@@ -32,7 +32,7 @@ alns.each{ |fa| ## alingned seq, hashed
   }
 }
 
-header = [] ### alignment given by refpkg
+header = [] ### alignment given by refhmm
 IO.read(fori).split(/^>/)[1..-1].each{ |ent|
   lab, *seq = ent.split("\n")
   seq = seq.join.gsub(/\s+/, "")

@@ -38,11 +38,11 @@ This tool was derived from PiPP (Pipeline for Phylogenetic Placement) and specia
    - Region merging for diamond query (02-1)
    - Diamond BLASTP analysis (02-2)
 
-3. **Ruby Processing Scripts (`script/`)**: Utilities for sequence validation, HMM result parsing, and refpkg validation
+3. **Ruby Processing Scripts (`script/`)**: Utilities for sequence validation, HMM result parsing, and refhmm validation
 
 ### Bundled Data
 
-- `refpkg/`: 50 WH clade HMM profiles (A, A1, A2, B, B1, ..., H22), each containing `.fa`, `.hmm`, `.fasttree.newick`
+- `refhmm/`: 50 WH clade HMM profiles (A, A1, A2, B, B1, ..., H22), each containing `.fa`, `.hmm`, `.fasttree.newick`
 - `db/wh.dmnd`: Diamond database of WH representative sequences
 
 ### Key Dependencies

@@ -268,9 +268,9 @@ class WHTreeMapper
     end
 
     # Check bundled resources
-    refpkg_dir = "#{@script_dir}/refpkg"
-    unless File.directory?(refpkg_dir) && Dir["#{refpkg_dir}/*"].size > 0
-      $stderr.puts "#{ERRMSG}  Bundled refpkg not found at #{refpkg_dir}."
+    refhmm_dir = "#{@script_dir}/refhmm"
+    unless File.directory?(refhmm_dir) && Dir["#{refhmm_dir}/*"].size > 0
+      $stderr.puts "#{ERRMSG}  Bundled refhmm not found at #{refhmm_dir}."
       exit 1
     end
 
@@ -342,7 +342,7 @@ class WHTreeMapper
       "input"        => @options[:input],
       "input_mode"   => @options[:input_mode],
       "codon_table"  => @options[:codon_table].to_s,
-      "refpkg"       => "#{@script_dir}/refpkg/*",
+      "refhmm"       => "#{@script_dir}/refhmm/*",
       "diamond_db"   => "#{@script_dir}/db/wh.dmnd",
       "seq_info"     => "#{@script_dir}/db/seq_info.tsv",
       "outdir_exist" => @outdir_exist ? "true" : "",

@@ -48,7 +48,7 @@ Dependencies (installed via environment.yaml):
 
 The following data must be placed in the WHTreeMapper directory:
 
-- `refpkg/` - HMM profiles for 8 WH clades (A-H) and 42 subclades
+- `refhmm/` - HMM profiles for 8 WH clades (A-H) and 42 subclades
 - `db/wh.dmnd` - Diamond database of WH representative sequences
 - `db/seq_info.tsv` - Sequence-to-clade mapping table
 

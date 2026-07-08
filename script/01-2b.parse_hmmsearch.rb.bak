@@ -76,7 +76,7 @@ ali_coords = Hash.new{ |h, i| h[i] = Array.new(fins.size, nil) } ## hit ali coor
 labs       = []
 
 fins.each.with_index{ |fin, idx|
-  labs << File.basename(fin).gsub(/\.out$/, "") ## refpkg label
+  labs << File.basename(fin).gsub(/\.out$/, "") ## refhmm label
   n_ent = 0
   flag  = ""
   gid   = ""
@@ -156,7 +156,7 @@ evalues.each_key{ |gid|
 }
 
 # fins.each.with_index{ |fin, idx|
-#   labs << File.basename(fin).gsub(/\.out$/, "") ## refpkg label
+#   labs << File.basename(fin).gsub(/\.out$/, "") ## refhmm label
 #   open(fin){ |fr|
 #     while l = fr.gets
 #       if l =~ /^#/
@@ -204,8 +204,8 @@ open("#{idir}/evalues.tsv", "w"){ |fw|
 lab2gids.each{ |lab, gids|
   # next if gids.size == 0
 
-  odir1 = "#{resdir}/refpkg/#{lab}/each/query/full_length"; mkdir_p odir1 unless File.directory?(odir1)
-  odir2 = "#{resdir}/refpkg/#{lab}/each/query/trimmed";     mkdir_p odir2 unless File.directory?(odir2)
+  odir1 = "#{resdir}/refhmm/#{lab}/each/query/full_length"; mkdir_p odir1 unless File.directory?(odir1)
+  odir2 = "#{resdir}/refhmm/#{lab}/each/query/trimmed";     mkdir_p odir2 unless File.directory?(odir2)
 
   open("#{odir1}/#{qname}.fa", "w"){ |fw| gids.each{ |gid| fw.puts ">"+gid2ent[gid] } }
   fwp = open("#{odir2}/#{qname}.position", "w")

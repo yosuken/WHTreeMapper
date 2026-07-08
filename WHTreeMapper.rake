@@ -71,7 +71,7 @@ task :default do
   InputMode    = ENV["input_mode"]
   raise("#{Errmsg} input_mode should be prot or nucl.") unless %w|prot nucl|.include?(InputMode)
   CodonTable   = (ENV["codon_table"] || "11").to_i
-  Rpkgs        = ENV["refpkg"]
+  Rhmms        = ENV["refhmm"]
   Ncpu         = ENV["ncpus"].to_i
   Evalue       = ENV["evalue"].to_f
   EvalueDom    = ENV["evaluedom"].to_f
@@ -97,8 +97,8 @@ task :default do
   tasks = []
   tasks << "01-1a-A.validate_query"
   tasks << "01-1a-B.parse_query_info"
-  tasks << "01-1b-A.validate_refpkg"
-  tasks << "01-1b-B.parse_refpkg_info"
+  tasks << "01-1b-A.validate_refhmm"
+  tasks << "01-1b-B.parse_refhmm_info"
   tasks << "01-2a.hmmsearch"
   tasks << "01-2b.parse_hmmsearch"
   tasks << "01-2c.split_fasta"
@@ -117,7 +117,7 @@ task :default do
 
   ## dir path
   Jobdir    = "#{Odir}/batch"
-  Pkgdir    = "#{Odir}/refpkg"
+  Refhmmdir    = "#{Odir}/refhmm"
   Predir    = "#{Odir}/prefilter"
   PreQuedir = "#{Odir}/prefilter/query"
   PreFildir = "#{Odir}/prefilter/hmmsearch"
@@ -129,7 +129,7 @@ task :default do
   ## variables
   $fques    = []
   $qnames   = {}
-  $fpkgs    = []
+  $fhmms    = []
   $rnames   = {}
 
   ## Odir exist? (warning is already printed by WHTreeMapper entry point)
@@ -261,43 +261,43 @@ task "01-1a-B.parse_query_info", ["step"] do |t, args|
 end
 # }}}
 
-# {{{ desc "01-1b-A.validate_refpkg"
-desc "01-1b-A.validate_refpkg"
-task "01-1b-A.validate_refpkg", ["step"] do |t, args|
+# {{{ desc "01-1b-A.validate_refhmm"
+desc "01-1b-A.validate_refhmm"
+task "01-1b-A.validate_refhmm", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
   outs   = []
-  script = "#{__dir__}/script/01-1b-A.validate_refpkg_detect.rb"
+  script = "#{__dir__}/script/01-1b-A.validate_refhmm_detect.rb"
 
-  rpkgs = Rpkgs.split(/[,\s]+/).sort_by{ |path| File.basename(path) }.inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
-  $stderr.puts ["", "", "\e[1;32m===== check refpkg (N=#{rpkgs.size}) \e[0m"]
-  raise("#{Errmsg} no refpkg directory detected.") if rpkgs.size == 0
+  rhmms = Rhmms.split(/[,\s]+/).sort_by{ |path| File.basename(path) }.inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
+  $stderr.puts ["", "", "\e[1;32m===== check refhmm (N=#{rhmms.size}) \e[0m"]
+  raise("#{Errmsg} no refhmm directory detected.") if rhmms.size == 0
 
   $rnames = {}
-  rpkgs.each{ |rpkg|
-    name = File.basename(rpkg)
-    raise("#{Errmsg} refpkg name #{name} is not unique.") if $rnames[name]
+  rhmms.each{ |rhmm|
+    name = File.basename(rhmm)
+    raise("#{Errmsg} refhmm name #{name} is not unique.") if $rnames[name]
     $rnames[name] = 1
 
-    fa    = Dir["#{rpkg}/*.fa"] + Dir["#{rpkg}/*.mfa"] + Dir["#{rpkg}/*.fasta"] + Dir["#{rpkg}/*.faa"]
-    fhmm  = Dir["#{rpkg}/*.hmm"]
-    ftre  = Dir["#{rpkg}/*.tree"] + Dir["#{rpkg}/*.nwk"] + Dir["#{rpkg}/*.newick"]
+    fa    = Dir["#{rhmm}/*.fa"] + Dir["#{rhmm}/*.mfa"] + Dir["#{rhmm}/*.fasta"] + Dir["#{rhmm}/*.faa"]
+    fhmm  = Dir["#{rhmm}/*.hmm"]
+    ftre  = Dir["#{rhmm}/*.tree"] + Dir["#{rhmm}/*.nwk"] + Dir["#{rhmm}/*.newick"]
 
-    raise("#{Errmsg} #{rpkg} is not a directory.") unless File.directory?(rpkg)
-    raise("#{Errmsg} #{rpkg} does not contain fasta file. #{rpkg}/*{.fa|.mfa|.faa|.fasta} should exist.") if fa.size == 0
-    raise("#{Errmsg} #{rpkg} contains multiple fasta files. #{rpkg}/*{.fa|.mfa|.faa|.fasta} should be only one.") if fa.size > 1
-    raise("#{Errmsg} #{rpkg} contains multiple tree files. #{rpkg}/*{.tree|.nwk|.newick} should be only one.") if ftre.size > 1
-    raise("#{Errmsg} #{rpkg} does not contain .hmm file. #{rpkg}/*.hmm should exist.") if fhmm.size == 0
-    raise("#{Errmsg} #{rpkg} contains multiple .hmm files. #{rpkg}/*.hmm should be only one.") if fhmm.size > 1
+    raise("#{Errmsg} #{rhmm} is not a directory.") unless File.directory?(rhmm)
+    raise("#{Errmsg} #{rhmm} does not contain fasta file. #{rhmm}/*{.fa|.mfa|.faa|.fasta} should exist.") if fa.size == 0
+    raise("#{Errmsg} #{rhmm} contains multiple fasta files. #{rhmm}/*{.fa|.mfa|.faa|.fasta} should be only one.") if fa.size > 1
+    raise("#{Errmsg} #{rhmm} contains multiple tree files. #{rhmm}/*{.tree|.nwk|.newick} should be only one.") if ftre.size > 1
+    raise("#{Errmsg} #{rhmm} does not contain .hmm file. #{rhmm}/*.hmm should exist.") if fhmm.size == 0
+    raise("#{Errmsg} #{rhmm} contains multiple .hmm files. #{rhmm}/*.hmm should be only one.") if fhmm.size > 1
 
     falnO  = fa[0]
     ftreO  = ftre[0]
     fhmmO  = fhmm[0]
 
-    odir = "#{Pkgdir}/#{name}"; mkdir_p odir unless File.directory?(odir)
-    faln = "#{Pkgdir}/#{name}/backbone.mfa"
-    flog = "#{Pkgdir}/#{name}/backbone.log"
+    odir = "#{Refhmmdir}/#{name}"; mkdir_p odir unless File.directory?(odir)
+    faln = "#{Refhmmdir}/#{name}/backbone.mfa"
+    flog = "#{Refhmmdir}/#{name}/backbone.log"
     if !File.exist?(faln)
-      outs << "ruby #{script} #{rpkg} #{odir} #{falnO} #{ftreO} #{fhmmO} >#{flog} 2>&1"
+      outs << "ruby #{script} #{rhmm} #{odir} #{falnO} #{ftreO} #{fhmmO} >#{flog} 2>&1"
     end
   }
 
@@ -308,18 +308,18 @@ task "01-1b-A.validate_refpkg", ["step"] do |t, args|
 end
 # }}}
 
-# {{{ desc "01-1b-B.parse_refpkg_info"
-desc "01-1b-B.parse_refpkg_info"
-task "01-1b-B.parse_refpkg_info", ["step"] do |t, args|
+# {{{ desc "01-1b-B.parse_refhmm_info"
+desc "01-1b-B.parse_refhmm_info"
+task "01-1b-B.parse_refhmm_info", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
   require 'json'
 
   $rnames.each_key{ |name|
-    fjsn = "#{Pkgdir}/#{name}/backbone.json"
+    fjsn = "#{Refhmmdir}/#{name}/backbone.json"
     sjsn = IO.readlines(fjsn)[0]
     puts sjsn
 
-    $fpkgs << JSON.parse(sjsn, symbolize_names: true)
+    $fhmms << JSON.parse(sjsn, symbolize_names: true)
   }
 end
 # }}}
@@ -331,7 +331,7 @@ task "01-2a.hmmsearch", ["step"] do |t, args|
   (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   outs   = []
 
-  npara = [Ncpu, $fpkgs.size].min
+  npara = [Ncpu, $fhmms.size].min
   ncpu  = [1, (Ncpu.to_f / npara).round].max
 
   puts "###"
@@ -342,7 +342,7 @@ task "01-2a.hmmsearch", ["step"] do |t, args|
   $fques.each{ |que|
     next if que[:numseq] == 0
     odir = "#{PreFildir}/#{que[:name]}/out"; mkdir_p odir
-    $fpkgs.each{ |pkg|
+    $fhmms.each{ |pkg|
       db   = pkg[:fhmm]
       fa   = que[:fasta]
       fout = "#{odir}/#{pkg[:name]}.out"
@@ -373,7 +373,7 @@ task "01-2b.parse_hmmsearch", ["step"] do |t, args|
     odir = "#{PreFildir}/#{que[:name]}/parsed"; mkdir_p odir unless File.directory?(odir)
     fhmm = "#{odir}/hmmsearch_concat.out"
     open(fhmm, "w"){ |fw|
-      $fpkgs.each{ |pkg|
+      $fhmms.each{ |pkg|
         f = "#{idir}/#{pkg[:name]}.out"
         if File.exist?(f) and !File.zero?(f)
           fw.puts IO.read(f)
@@ -441,7 +441,7 @@ task "01-2c.split_fasta", ["step"] do |t, args|
       end
     }
 
-    $fpkgs.each{ |pkg|
+    $fhmms.each{ |pkg|
       regs = hmm2regs[pkg[:hmmname]]
       gids = hmm2gids[pkg[:hmmname]]
       next if !regs or regs.keys.size == 0
@@ -465,7 +465,7 @@ task "01-2d.copy_detected", ["step"] do |t, args|
   (puts "Already done. Skipped." ; next) if File.exist?("#{Logdir}/#{t.name.split(":")[-1]}/exit")
   outs = []
 
-  $fpkgs.each{ |pkg|
+  $fhmms.each{ |pkg|
     %w|whole region|.each{ |type|
       fins = []
       $fques.each{ |que|
@@ -498,7 +498,7 @@ task "02-1.merge_regions", ["step"] do |t, args|
 
   nseq = 0
   open(fout, "w") { |fw|
-    $fpkgs.each { |pkg|
+    $fhmms.each { |pkg|
       fin = "#{Resdir}/#{pkg[:name]}/seq/region.fa"
       next unless File.exist?(fin) && !File.zero?(fin)
 

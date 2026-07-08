@@ -15,7 +15,7 @@ N_check = 10000 ### compare between alignments using first N_check sequences
 
 aln0 = []
 open(faln){ |fr|
-  ### refpkg alignment
+  ### refhmm alignment
   j = 0
   while l = fr.gets
     if l[0] == ">"
