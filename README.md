@@ -131,7 +131,7 @@ Main output file. Each row corresponds to a query sequence with a WH region dete
 
 | # | Column | Description |
 |---|--------|-------------|
-| 0 | query | Query sequence ID (with region suffix) |
+| 0 | query | Original query protein sequence ID |
 | 1 | detected_wh_region | Extracted WH region coordinates in the query (e.g., `10-109`) |
 | 2 | clade | WH clade of the best diamond hit (A, B, C, ..., H) |
 | 3 | subclade | WH subclade (A1, A2, B1, ..., H22). Empty if hit is at the clade level |

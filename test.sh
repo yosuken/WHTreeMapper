@@ -10,6 +10,7 @@ run_case() {
   local mode="$1"
   local input="$2"
   local outdir="$3"
+  local expected_query="$4"
 
   echo "==> ${mode}: ${input} -> ${outdir}"
   rm -rf "$outdir"
@@ -28,9 +29,16 @@ run_case() {
   fi
 
   echo "==> ${outdir}/detected.tsv: ${entries} entries"
+
+  local query
+  query="$(awk 'NR == 2 { print $1 }' "${outdir}/detected.tsv")"
+  if [[ "$query" != "$expected_query" ]]; then
+    echo "ERROR: expected query '${expected_query}', got '${query}' in ${outdir}/detected.tsv" >&2
+    exit 1
+  fi
 }
 
-run_case --prot test_seq/BFU66023.faa test/BFU66023
-run_case --nucl test_seq/LC852818.fa test/LC852818
+run_case --prot test_seq/BFU66023.faa test/BFU66023 BFU66023.1
+run_case --nucl test_seq/LC852818.fa test/LC852818 LC852818.1_1
 
 echo "==> test passed"

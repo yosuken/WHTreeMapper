@@ -596,7 +596,8 @@ task "02-3.create_detected_tsv", ["step"] do |t, args|
         qseqid = a[0]
         sseqid = a[1]
 
-        query = qseqid
+        ### qseqid has the detected region suffix; query is the original protein ID.
+        query = qseqid.sub(/_fm\d+_to\d+$/, "")
 
         ### extract detected WH region from last _fmX_toY in qseqid
         wh_region = (qseqid =~ /_fm(\d+)_to(\d+)$/) ? "#{$1}-#{$2}" : ""
