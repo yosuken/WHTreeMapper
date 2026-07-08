@@ -5,39 +5,43 @@
 
 ## Overview
 
-WHTreeMapper detects winged-helix (WH) regions of WH RIPs (replication initiation proteins) in query protein sequences using HMM-based prefiltering against 50 WH clade profiles (8 clades and 42 subclades), then performs diamond blastp against a WH reference database.
+WHTreeMapper detects winged-helix (WH) regions of WH RIPs (replication initiation proteins) in query protein sequences using HMM-based prefiltering against 50 WH clade profiles (8 clades and 42 subclades), then performs diamond blastp against a WH reference database. Nucleotide FASTA input can also be translated to proteins with Prodigal metagenome mode.
 
 ### Workflow
 
-1. Prefilter query protein sequences by HMM similarity detection (hmmsearch) against 50 WH clade profiles (8 clades and 42 subclades)
-2. Extract detected WH regions from query sequences
-3. Merge detected regions and run diamond blastp against WH reference database
-4. Generate `detected.tsv` with clade annotation and diamond blastp results
+1. If nucleotide FASTA is given, predict protein sequences with Prodigal `-p meta`
+2. Prefilter query protein sequences by HMM similarity detection (hmmsearch) against 50 WH clade profiles (8 clades and 42 subclades)
+3. Extract detected WH regions from query sequences
+4. Merge detected regions and run diamond blastp against WH reference database
+5. Generate `detected.tsv` with clade annotation and diamond blastp results
 
 ## Install
 
-### 1. Create conda environment
+### 1. Create conda environment and install command
 
-Using `environment.yaml`:
+Using `install.sh`:
 
 ```bash
-# Using micromamba
+bash install.sh
+micromamba activate WHTreeMapper
+wh_tree_mapper -h
+```
+
+`install.sh` uses `environment.yaml` with `micromamba`, `mamba`, or `conda`, then installs a `wh_tree_mapper` launcher into the environment's `bin/` directory.
+
+Manual environment creation is also possible, but `wh_tree_mapper` will not be added to `PATH` automatically:
+
+```bash
 micromamba create -n WHTreeMapper -f environment.yaml -y
 micromamba activate WHTreeMapper
-
-# Or using mamba
-mamba env create -f environment.yaml
-mamba activate WHTreeMapper
-
-# Or using conda
-conda env create -f environment.yaml
-conda activate WHTreeMapper
+./wh_tree_mapper -h
 ```
 
 Dependencies (installed via environment.yaml):
 - ruby (>= 3.2)
 - hmmer (3.3.2)
 - diamond (2.1.9)
+- prodigal (>= 2.6.3)
 - GNU parallel (>= 20230822)
 
 ### 2. Set up bundled data
@@ -52,16 +56,24 @@ The following data must be placed in the WHTreeMapper directory:
 
 ```bash
 micromamba activate WHTreeMapper
-./WHTreeMapper [options] -q <query protein fasta(s)> -o <output dir>
+wh_tree_mapper (--prot | --nucl) -i <input fasta(s)> -o <output dir>
 ```
+
+Exactly one of `--prot` or `--nucl` is required.
 
 ### Options
 
 ```
 [File/directory]
-    -q, --query FILE(S)              Query sequence file(s) (protein fasta, can be gzipped) [required]
+    -i, --input FILE(S)              Input sequence file(s) (FASTA, can be gzipped) [required]
     -o, --outdir PATH                Output directory [required]
         --[no-]overwrite             Overwrite output directory (default: no overwrite)
+
+[Input]
+        Exactly one of --prot or --nucl is required.
+        --prot                       Treat input as protein FASTA
+        --nucl                       Treat input as nucleotide FASTA and predict proteins with prodigal -p meta
+        --codon-table INT            Translation table for prodigal -g when --nucl is used (default: 11)
 
 [HMM prefilter]
     -e, --evalue NUM                 E-value threshold of hmmsearch (default: 1e-5)
@@ -87,16 +99,19 @@ micromamba activate WHTreeMapper
 
 ```bash
 # Basic usage
-./WHTreeMapper -q query.faa -o results
+wh_tree_mapper --prot -i query.faa -o results
 
 # Multiple query files with 4 CPUs
-./WHTreeMapper -q "queries/*.faa" -o results -n 4
+wh_tree_mapper --prot -i "queries/*.faa" -o results -n 4
+
+# Nucleotide FASTA input translated by Prodigal metagenome mode
+wh_tree_mapper --nucl -i contigs.fna -o results --codon-table 11
 
 # Overwrite existing output
-./WHTreeMapper -q query.faa -o results --overwrite
+wh_tree_mapper --prot -i query.faa -o results --overwrite
 
 # Custom HMM and diamond thresholds
-./WHTreeMapper -q query.faa -o results -e 1e-3 --minhmmcov 0.5 --dmnd-id 30 --dmnd-subject-cover 60
+wh_tree_mapper --prot -i query.faa -o results -e 1e-3 --minhmmcov 0.5 --dmnd-id 30 --dmnd-subject-cover 60
 ```
 
 ## Output
@@ -142,6 +157,7 @@ Main output file. Each row corresponds to a query sequence with a WH region dete
 ### Default parameters
 
 - HMM detection: `-e 1e-5 --evaluedom 1e-2 --minhmmcov 0.8 --minhmmcovdom 0.2`
+- Prodigal for nucleotide input: `-p meta -g 11`
 - Diamond BLASTP: `--dmnd-evalue 1e-5 --dmnd-id 40 --dmnd-subject-cover 80 --dmnd-max-target-seqs 1`
 - Diamond BLASTP (fixed): `--ultra-sensitive --dbsize 1e9`
 

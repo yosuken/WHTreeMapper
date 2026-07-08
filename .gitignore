@@ -15,7 +15,7 @@
 /my.*
 
 ### test output directory
-/test/wh/out
+/test/
 
 ### pbslog
 /pbslog

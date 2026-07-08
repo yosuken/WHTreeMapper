@@ -44,6 +44,8 @@ CheckVersion = lambda do |commands|
       %{which parallel && LANG=C parallel --version 2>&1 |head -n 1}
     when "diamond"
       %{which diamond && diamond version 2>&1}
+    when "prodigal"
+      %{which prodigal && prodigal -v 2>&1 |head -n 2}
     end
     puts ""
     puts "\e[1;32m===== check version: #{command}\e[0m"
@@ -65,7 +67,10 @@ task :default do
   ### constants from arguments
   Odir         = ENV["outdir"]
   OdirExist    = ENV["outdir_exist"]
-  Fques        = ENV["query"]
+  Fques        = ENV["input"]
+  InputMode    = ENV["input_mode"]
+  raise("#{Errmsg} input_mode should be prot or nucl.") unless %w|prot nucl|.include?(InputMode)
+  CodonTable   = (ENV["codon_table"] || "11").to_i
   Rpkgs        = ENV["refpkg"]
   Ncpu         = ENV["ncpus"].to_i
   Evalue       = ENV["evalue"].to_f
@@ -107,6 +112,7 @@ task :default do
 
   ### check version
   commands = %w|hmmsearch ruby parallel diamond|
+  commands << "prodigal" if InputMode == "nucl"
   CheckVersion.call(commands)
 
   ## dir path
@@ -142,8 +148,13 @@ end
 desc "01-1a-A.validate_query"
 task "01-1a-A.validate_query", ["step"] do |t, args|
   PrintStatus.call(args.step, NumStep, "START", t)
-  outs   = []
-  script = "#{__dir__}/script/#{t.name}.rb"
+  outs          = []
+  script        = "#{__dir__}/script/#{t.name}.rb"
+  script_nucl   = "#{__dir__}/script/predict_nucl_query.rb"
+  query_name_of = lambda do |fque|
+    name = File.basename(fque).gsub(/\.gz$/, "").gsub(/\.gzip$/, "").split(".")[0..-2]*"."
+    name.empty? ? File.basename(fque).gsub(/\.gz$/, "").gsub(/\.gzip$/, "") : name
+  end
 
   fques = Fques.split(/[,\s]+/).inject([]){ |a, path| a += Dir[path.gsub("~", ENV["HOME"])].sort }
   fques = fques.map{ |fque|
@@ -172,16 +183,44 @@ task "01-1a-A.validate_query", ["step"] do |t, args|
   $stderr.puts ["", "", "\e[1;32m===== check query file (N=#{fques.size}) \e[0m"]
   raise("#{Errmsg} no query file detected.") if fques.size == 0
 
+  mkdir_p PreQuedir
+
+  if InputMode == "nucl"
+    pdir = "#{PreQuedir}/prodigal"; mkdir_p pdir
+    prodigal_outs = []
+    fques = fques.map{ |fque|
+      name = query_name_of.call(fque)
+      faa  = "#{pdir}/#{name}.faa"
+      fout = "#{pdir}/#{name}.gff"
+      flog = "#{pdir}/#{name}.prodigal.log"
+      prodigal_outs << "ruby #{script_nucl} #{CodonTable} #{fque} #{faa} #{fout} #{flog}" unless File.exist?(faa)
+      faa
+    }
+
+    if prodigal_outs.size > 0
+      WriteBatch.call(t, Jobdir, prodigal_outs)
+      RunBatch.call(t, Jobdir, Ncpu, Logdir)
+    end
+
+    fques = fques.map{ |fque|
+      if File.zero?(fque)
+        $stderr.puts "#{Warmsg} #{fque} is empty. Skip it."
+        next nil
+      end
+      fque
+    }.compact
+    raise("#{Errmsg} no protein sequence was predicted from nucleotide query file.") if fques.size == 0
+  end
+
   fques.each{ |fque|
-    name = File.basename(fque).gsub(/\.gz/, "").gsub(/\.gzip/, "").split(".")[0..-2]*"."
+    name = query_name_of.call(fque)
     raise("#{Errmsg} file name #{name} is given twice.") if $qnames[name]
     $qnames[name] = 1
   }
 
-  mkdir_p PreQuedir
   flsts  = []
   fques.each{ |fque|
-    name = File.basename(fque).gsub(/\.gz/, "").gsub(/\.gzip/, "").split(".")[0..-2]*"."
+    name = query_name_of.call(fque)
     fa   = "#{PreQuedir}/#{name}.fa"
     fjsn = "#{PreQuedir}/#{name}.json"
     flst = "#{PreQuedir}/#{name}.list"

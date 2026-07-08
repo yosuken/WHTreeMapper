@@ -6,4 +6,5 @@ dependencies:
   - ruby>=3.2
   - hmmer=3.3.2
   - diamond=2.1.9
+  - prodigal>=2.6.3
   - parallel>=20230822

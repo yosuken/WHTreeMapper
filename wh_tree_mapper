@@ -22,11 +22,14 @@ class WHTreeMapper
   def initialize
     @options = {
       # Required options
-      query: nil,
+      input: nil,
       outdir: nil,
 
       # Optional flags
       overwrite: false,
+      input_mode: nil,
+      input_modes: [],
+      codon_table: 11,
 
       # HMM prefilter options
       evalue:       1e-5,
@@ -61,19 +64,23 @@ class WHTreeMapper
     #{@progname} - WH (Walker Homology) region detection and diamond blastp analysis tool.
     #{@progname} detects WH regions in query protein sequences using HMM-based prefiltering
     against 50 WH clade profiles, then performs diamond blastp against a WH reference database.
+    Nucleotide FASTA input can be translated to proteins with Prodigal metagenome mode.
 
     Workflow:
-    1. Prefilter query sequences by HMM similarity detection (hmmsearch) against WH clade profiles
-    2. Extract detected WH regions from query sequences
-    3. Merge detected regions and run diamond blastp against WH reference database
+    1. If nucleotide FASTA is given, predict protein sequences with Prodigal -p meta
+    2. Prefilter query sequences by HMM similarity detection (hmmsearch) against WH clade profiles
+    3. Extract detected WH regions from query sequences
+    4. Merge detected regions and run diamond blastp against WH reference database
 
     \e[1;32m[usage]\e[0m
-    $ #{@progname} [options] -q <query protein fasta(s)> -o <output dir>
+    $ #{@progname} (--prot | --nucl) -i <input fasta(s)> -o <output dir>
+    Exactly one of --prot or --nucl is required.
 
     \e[1;32m[dependencies]\e[0m
     - ruby (ver >= 2.0)
     - hmmer (ver >= 3.0)
     - diamond (ver >= 2.1.9)
+    - prodigal (when --nucl is used)
     - GNU parallel (when --ncpus > 1)
 
     \e[1;32m[output files]\e[0m
@@ -93,8 +100,8 @@ class WHTreeMapper
 
       # {{{ File/directory options
       opts.on("[File/directory]")
-      opts.on("-q", "--query FILE(S)", "Query sequence file(s) (protein fasta, can be gzipped) [required]") do |v|
-        @options[:query] = v
+      opts.on("-i", "--input FILE(S)", "Input sequence file(s) (FASTA, can be gzipped) [required]") do |v|
+        @options[:input] = v
       end
 
       opts.on("-o", "--outdir PATH", "Output directory [required]") do |v|
@@ -103,6 +110,25 @@ class WHTreeMapper
 
       opts.on("--[no-]overwrite", "Overwrite output directory (default: no overwrite)") do |v|
         @options[:overwrite] = v
+      end
+      # }}}
+
+      # {{{ Input options
+      opts.on("\n[Input]")
+      opts.separator("        Exactly one of --prot or --nucl is required.")
+
+      opts.on("--prot", "Treat input as protein FASTA") do
+        @options[:input_mode] = "prot"
+        @options[:input_modes] << "prot"
+      end
+
+      opts.on("--nucl", "Treat input as nucleotide FASTA and predict proteins with prodigal -p meta") do
+        @options[:input_mode] = "nucl"
+        @options[:input_modes] << "nucl"
+      end
+
+      opts.on("--codon-table INT", Integer, "Translation table for prodigal -g when --nucl is used (default: 11)") do |v|
+        @options[:codon_table] = v
       end
       # }}}
 
@@ -184,7 +210,7 @@ class WHTreeMapper
     # Handle remaining arguments
     unless ARGV.empty?
       $stderr.puts %|#{ERRMSG} unparsable argument (#{ARGV.first}).|
-      $stderr.puts %|        Note: do not forget quotation marks to use wildcards, like `-q "query_1 query_2"` or `-q 'query_*'`|
+      $stderr.puts %|        Note: do not forget quotation marks to use wildcards, like `-i "query_1 query_2"` or `-i 'query_*'`|
       exit 1
     end
   end
@@ -192,8 +218,8 @@ class WHTreeMapper
 
   # {{{ def validate_options
   def validate_options
-    unless @options[:query]
-      $stderr.puts "#{ERRMSG}  -q, --query <fasta file(s)> should be given."
+    unless @options[:input]
+      $stderr.puts "#{ERRMSG}  -i, --input <fasta file(s)> should be given."
       $stderr.puts "         execute '#{@progname} -h' for usage"
       exit 1
     end
@@ -203,6 +229,20 @@ class WHTreeMapper
       $stderr.puts "         execute '#{@progname} -h' for usage"
       exit 1
     end
+
+    input_modes = @options[:input_modes].uniq
+    if input_modes.empty?
+      $stderr.puts "#{ERRMSG}  one of --prot or --nucl should be given."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+
+    if input_modes.size > 1
+      $stderr.puts "#{ERRMSG}  --prot and --nucl are mutually exclusive."
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    @options[:input_mode] = input_modes[0]
 
     # Check output directory
     if File.directory?(@options[:outdir]) && !@options[:overwrite]
@@ -219,6 +259,11 @@ class WHTreeMapper
 
     if @options[:ncpus] <= 0
       $stderr.puts "#{ERRMSG}  --ncpus '#{@options[:ncpus]}' should be positive integer."
+      exit 1
+    end
+
+    if @options[:codon_table] <= 0
+      $stderr.puts "#{ERRMSG}  --codon-table '#{@options[:codon_table]}' should be positive integer."
       exit 1
     end
 
@@ -242,6 +287,7 @@ class WHTreeMapper
   # {{{ def check_dependencies
   def check_dependencies
     commands = ["hmmsearch", "diamond", "ruby"]
+    commands << "prodigal" if @options[:input_mode] == "nucl"
     commands << "parallel" if @options[:ncpus] > 1
 
     commands.each do |cmd|
@@ -293,7 +339,9 @@ class WHTreeMapper
 
     env_vars = {
       "outdir"       => @options[:outdir],
-      "query"        => @options[:query],
+      "input"        => @options[:input],
+      "input_mode"   => @options[:input_mode],
+      "codon_table"  => @options[:codon_table].to_s,
       "refpkg"       => "#{@script_dir}/refpkg/*",
       "diamond_db"   => "#{@script_dir}/db/wh.dmnd",
       "seq_info"     => "#{@script_dir}/db/seq_info.tsv",

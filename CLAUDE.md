@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WHTreeMapper is a Ruby-based bioinformatics tool for detecting Walker Homology (WH) regions in protein sequences and performing diamond blastp analysis against a WH reference database. It uses HMM-based prefiltering against 50 WH clade profiles to extract homologous regions, then identifies best hits via diamond blastp.
+WHTreeMapper is a Ruby-based bioinformatics tool for detecting Walker Homology (WH) regions in protein sequences and performing diamond blastp analysis against a WH reference database. It uses HMM-based prefiltering against 50 WH clade profiles to extract homologous regions, then identifies best hits via diamond blastp. Nucleotide FASTA input can be translated to proteins with Prodigal metagenome mode.
 
 This tool was derived from PiPP (Pipeline for Phylogenetic Placement) and specialized for WH region analysis.
 
@@ -12,20 +12,23 @@ This tool was derived from PiPP (Pipeline for Phylogenetic Placement) and specia
 
 ```bash
 # Basic usage
-./WHTreeMapper -q <query_protein_fasta> -o <output_dir>
+./wh_tree_mapper --prot -i <query_protein_fasta> -o <output_dir>
+
+# Nucleotide FASTA input
+./wh_tree_mapper --nucl -i <query_nucleotide_fasta> -o <output_dir> --codon-table 11
 
 # With multiple CPUs
-./WHTreeMapper -q "queries/*.faa" -o results -n 4
+./wh_tree_mapper --prot -i "queries/*.faa" -o results -n 4
 
 # Overwrite existing output
-./WHTreeMapper -q query.faa -o results --overwrite -n 2
+./wh_tree_mapper --prot -i query.faa -o results --overwrite -n 2
 ```
 
 ## Architecture Overview
 
 ### Core Components
 
-1. **Main Script (`WHTreeMapper`)**: Ruby CLI that validates dependencies, parses arguments, and invokes the Rake workflow
+1. **Main Script (`wh_tree_mapper`)**: Ruby CLI that validates dependencies, parses arguments, and invokes the Rake workflow
 
 2. **Rake Workflow (`WHTreeMapper.rake`)**: Orchestrates the pipeline through 10 sequential tasks:
    - Query validation and preprocessing (01-1a-A, 01-1a-B)
@@ -47,12 +50,13 @@ This tool was derived from PiPP (Pipeline for Phylogenetic Placement) and specia
 - ruby (>= 2.0)
 - hmmer (>= 3.0) for hmmsearch
 - diamond (>= 2.1.9) for blastp
+- prodigal for nucleotide FASTA input
 - GNU parallel (when --ncpus > 1)
 
 ### Pipeline Workflow
 
 ```
-Input: protein FASTA → hmmsearch (50 HMM profiles) → parse hits → extract WH regions
+Input: protein FASTA or nucleotide FASTA → Prodigal (--nucl only) → hmmsearch (50 HMM profiles) → parse hits → extract WH regions
 → merge regions → diamond blastp → output
 ```
 
